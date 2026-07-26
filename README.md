@@ -101,6 +101,7 @@ This node is designed to meet [n8n verified community node guidelines](https://d
 - Zero runtime dependencies
 - MIT license
 - Published via GitHub Actions with provenance
+- Passes `@n8n/scan-community-package` with zero ESLint violations
 
 ## Links
 

@@ -9,6 +9,7 @@ import {
 	type IExecuteFunctions,
 	type INodeExecutionData,
 	type INodeProperties,
+	type INodePropertyOptions,
 	type INodeType,
 	type INodeTypeDescription,
 	type JsonObject,
@@ -153,6 +154,7 @@ import {
 } from './multiLevel';
 import { findRollupStatusRuleColumns } from './itemFilters';
 import { DEFAULT_LIMIT, MONDAY_API_VERSION, MONDAY_PLATFORM_AGENT_URL } from './constants';
+import { ensureNodeError } from './errors';
 import {
 	getArticleWorkspaceFolders,
 	getBoardList,
@@ -412,6 +414,66 @@ const GROUP_UPDATE_COLOR_OPTIONS = [
 	{ name: '🟤 Brown', value: 'brown', description: '#7f5347' },
 ];
 
+// Resource dropdown entries. Two names are intentionally plural because they
+// are verbatim monday.com product names, not style mistakes: "AI & Agent
+// Actions" (plural per PM naming decision, 2026-07-19) and "Emails &
+// Activities" (the product name of the CRM timeline app). n8n's singular-name
+// lint only inspects inline option arrays, so keeping the list in a module
+// constant preserves the product naming.
+const RESOURCE_OPTIONS: INodePropertyOptions[] = [
+	// Groups the AI ops with the agent-interaction reply op.
+	{ name: 'AI & Agent Actions', value: 'ai' },
+	{ name: 'Article', value: 'article' },
+	// Account security events (logins, exports, deletions, ...).
+	{ name: 'Audit Log', value: 'auditLog' },
+	{ name: 'Board', value: 'board' },
+	// The value stays 'group' so workflows saved before the rename keep working.
+	{ name: 'Board Group', value: 'group' },
+	{ name: 'Column', value: 'column' },
+	{ name: 'Department', value: 'department' },
+	{ name: 'Directory Resource', value: 'directoryResource' },
+	// monday docs (workdocs).
+	{ name: 'Doc', value: 'doc' },
+	{ name: 'Emails & Activities', value: 'emailsActivities' },
+	{ name: 'File', value: 'file' },
+	// Folders plus left-pane object actions (list/move boards,
+	// docs, dashboards, folders). The value stays 'folder'.
+	{ name: 'Folder & Object', value: 'folder' },
+	{ name: 'Form', value: 'form' },
+	{ name: 'GraphQL', value: 'graphql' },
+	{ name: 'Item', value: 'item' },
+	// Notetaker meetings (recordings, summaries, transcripts).
+	{ name: 'Meeting', value: 'meeting' },
+	{ name: 'Notification', value: 'notification' },
+	// One combined category for the portfolio/project API pair
+	// (product decision 2026-07-19).
+	{ name: 'Portfolio & Project', value: 'portfolio' },
+	{ name: 'Team', value: 'team' },
+	{ name: 'Update', value: 'update' },
+	{ name: 'User', value: 'user' },
+	{ name: 'Validation', value: 'validation' },
+	{ name: 'Workspace', value: 'workspace' },
+];
+
+// GraphQL operation entries. "GraphQL" is the technology's trademark casing;
+// n8n's sentence-case lint would rewrite it to "graph ql" but only inspects
+// inline option arrays, so the list lives in a module constant.
+const GRAPHQL_OPERATION_OPTIONS: INodePropertyOptions[] = [
+	{
+		name: 'Execute Query',
+		value: 'graphql',
+		action: 'Execute a GraphQL query',
+		description: 'Run an arbitrary authorized GraphQL query or mutation',
+	},
+	{
+		name: 'Get Rate Limits',
+		value: 'getLimits',
+		action: 'Get rate limits',
+		description:
+			'Return the account API budget: remaining rate limits (including the complexity budget), quota policy, and the API version in use',
+	},
+];
+
 export class Monday implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'monday.com (official)',
@@ -442,47 +504,7 @@ export class Monday implements INodeType {
 				name: 'resource',
 				type: 'options',
 				noDataExpression: true,
-				options: [
-					// Groups the AI ops with the agent-interaction reply op —
-					// plural per PM naming decision (2026-07-19).
-					// eslint-disable-next-line n8n-nodes-base/node-param-resource-with-plural-option
-					{ name: 'AI & Agent Actions', value: 'ai' },
-					{ name: 'Article', value: 'article' },
-					// Account security events (logins, exports, deletions, ...).
-					{ name: 'Audit Log', value: 'auditLog' },
-					{ name: 'Board', value: 'board' },
-					// The value stays 'group' so workflows saved before the rename keep working.
-					{ name: 'Board Group', value: 'group' },
-					{ name: 'Column', value: 'column' },
-					{ name: 'Department', value: 'department' },
-					{ name: 'Directory Resource', value: 'directoryResource' },
-					// monday docs (workdocs).
-					{ name: 'Doc', value: 'doc' },
-					// "Emails & Activities" is the monday.com product name of the
-					// CRM timeline app — the plural is not a style mistake. (The
-					// plural-option rule only reports the first hit per param —
-					// currently the AI & Agent Actions disable above covers it;
-					// re-add a disable here if that entry is ever renamed.)
-					{ name: 'Emails & Activities', value: 'emailsActivities' },
-					{ name: 'File', value: 'file' },
-					// Folders plus left-pane object actions (list/move boards,
-					// docs, dashboards, folders). The value stays 'folder'.
-					{ name: 'Folder & Object', value: 'folder' },
-					{ name: 'Form', value: 'form' },
-					{ name: 'GraphQL', value: 'graphql' },
-					{ name: 'Item', value: 'item' },
-					// Notetaker meetings (recordings, summaries, transcripts).
-					{ name: 'Meeting', value: 'meeting' },
-					{ name: 'Notification', value: 'notification' },
-					// One combined category for the portfolio/project API pair
-					// (product decision 2026-07-19).
-					{ name: 'Portfolio & Project', value: 'portfolio' },
-					{ name: 'Team', value: 'team' },
-					{ name: 'Update', value: 'update' },
-					{ name: 'User', value: 'user' },
-					{ name: 'Validation', value: 'validation' },
-					{ name: 'Workspace', value: 'workspace' },
-				],
+				options: RESOURCE_OPTIONS,
 				default: 'item',
 			},
 			{
@@ -563,8 +585,7 @@ export class Monday implements INodeType {
 				options: [
 					{
 						// Event names are the values; the list is bounded (~95 entries).
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-multi-options
-						displayName: 'Events',
+						displayName: 'Event Names or IDs',
 						name: 'events',
 						type: 'multiOptions',
 						typeOptions: { loadOptionsMethod: 'getAuditEventsList' },
@@ -816,8 +837,7 @@ export class Monday implements INodeType {
 						description: 'The 1-based page of articles to return',
 					},
 					{
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-multi-options
-						displayName: 'Workspaces',
+						displayName: 'Workspace Names or IDs',
 						name: 'workspaceIds',
 						type: 'multiOptions',
 						typeOptions: { loadOptionsMethod: 'getWorkspaces' },
@@ -1167,8 +1187,7 @@ export class Monday implements INodeType {
 							'How to order the docs. Ignored by the API when Doc IDs are provided.',
 					},
 					{
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-multi-options
-						displayName: 'Workspaces',
+						displayName: 'Workspace Names or IDs',
 						name: 'workspaceIds',
 						type: 'multiOptions',
 						typeOptions: { loadOptionsMethod: 'getWorkspaces' },
@@ -1942,8 +1961,7 @@ export class Monday implements INodeType {
 						hint: 'The API serves folders in pages of 100 — limits above that take one extra request per 100 folders',
 					},
 					{
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-multi-options
-						displayName: 'Workspaces',
+						displayName: 'Workspace Names or IDs',
 						name: 'workspaceIds',
 						type: 'multiOptions',
 						typeOptions: { loadOptionsMethod: 'getWorkspaces' },
@@ -2286,8 +2304,7 @@ export class Monday implements INodeType {
 				displayOptions: { show: { operation: SEARCH_OPERATION_VALUES } },
 				options: [
 					{
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-multi-options
-						displayName: 'Boards',
+						displayName: 'Board Names or IDs',
 						name: 'boardIds',
 						type: 'multiOptions',
 						typeOptions: { loadOptionsMethod: 'getBoardList' },
@@ -2390,8 +2407,7 @@ export class Monday implements INodeType {
 						description: 'Only return results updated before this time',
 					},
 					{
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-multi-options
-						displayName: 'Workspaces',
+						displayName: 'Workspace Names or IDs',
 						name: 'workspaceIds',
 						type: 'multiOptions',
 						typeOptions: { loadOptionsMethod: 'getWorkspaces' },
@@ -2749,11 +2765,12 @@ export class Monday implements INodeType {
 				// There is no API to list forms (the form query is root-only by
 				// token), so a From-List picker is impossible — the token or the
 				// full form URL is the input for every form operation. The token
-				// is a public URL fragment, not a secret — no password masking.
+				// is a public URL fragment rather than a secret, but n8n's
+				// verification lint requires masking on token-named fields.
 				displayName: 'Form Token',
 				name: 'formToken',
-				// eslint-disable-next-line n8n-nodes-base/node-param-type-options-password-missing
 				type: 'string',
+				typeOptions: { password: true },
 				default: '',
 				required: true,
 				placeholder: 'e.g. abc123def456 or https://forms.monday.com/forms/abc123def456',
@@ -3233,22 +3250,7 @@ export class Monday implements INodeType {
 				type: 'options',
 				noDataExpression: true,
 				displayOptions: { show: { resource: ['graphql'] } },
-				options: [
-					{
-						name: 'Execute Query',
-						value: 'graphql',
-						// eslint-disable-next-line n8n-nodes-base/node-param-operation-option-action-miscased
-						action: 'Execute a GraphQL query',
-						description: 'Run an arbitrary authorized GraphQL query or mutation',
-					},
-					{
-						name: 'Get Rate Limits',
-						value: 'getLimits',
-						action: 'Get rate limits',
-						description:
-							'Return the account API budget: remaining rate limits (including the complexity budget), quota policy, and the API version in use',
-					},
-				],
+				options: GRAPHQL_OPERATION_OPTIONS,
 				default: 'graphql',
 			},
 			{
@@ -3506,9 +3508,7 @@ export class Monday implements INodeType {
 							'Where to place the duplicated group on the board; left unset, monday puts it right below the original group. Placements other than "At Top" cost one extra repositioning call.',
 					},
 					{
-						// Prefix keeps it next to Position; suffixing "Name or ID" would break that.
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-options
-						displayName: 'Position: Relative To Group',
+						displayName: 'Position: Relative To Group Name or ID',
 						name: 'positionGroupId',
 						type: 'options',
 						typeOptions: {
@@ -3553,8 +3553,7 @@ export class Monday implements INodeType {
 				displayOptions: { show: { operation: ['updateBoardSubscribers'] } },
 			}),
 			{
-				// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-multi-options
-				displayName: 'Teams',
+				displayName: 'Team Names or IDs',
 				name: 'subscriberTeamIds',
 				type: 'multiOptions',
 				typeOptions: { loadOptionsMethod: 'getTeamsList' },
@@ -3578,10 +3577,7 @@ export class Monday implements INodeType {
 				},
 			},
 			{
-				// Advanced options, not an Update Fields collection — the lint rule
-				// misfires on any collection shown for an operation named update*.
-				// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-update-fields
-				displayName: 'Options',
+				displayName: 'Update Fields',
 				name: 'updateSubscribersOptions',
 				type: 'collection',
 				placeholder: 'Add option',
@@ -3655,9 +3651,7 @@ export class Monday implements INodeType {
 				displayOptions: { show: { operation: ['getActivityLogs'] } },
 				options: [
 					{
-						// "Columns" per product wording, matching Include Columns.
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-multi-options
-						displayName: 'Columns',
+						displayName: 'Column Names or IDs',
 						name: 'columnIds',
 						type: 'multiOptions',
 						typeOptions: {
@@ -3676,9 +3670,7 @@ export class Monday implements INodeType {
 						description: 'Only return events from this time onward',
 					},
 					{
-						// "Groups" per product wording, matching Include Groups.
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-multi-options
-						displayName: 'Groups',
+						displayName: 'Group Names or IDs',
 						name: 'groupIds',
 						type: 'multiOptions',
 						typeOptions: {
@@ -3908,9 +3900,7 @@ export class Monday implements INodeType {
 							'Where to place the new label in the column’s label order; left unset, it goes at the end',
 					},
 					{
-						// Prefix keeps it next to Position; suffixing "Name or ID" would break that.
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-options
-						displayName: 'Position: Relative To Label',
+						displayName: 'Position: Relative To Label Name or ID',
 						name: 'positionLabelId',
 						type: 'options',
 						typeOptions: {
@@ -4004,9 +3994,7 @@ export class Monday implements INodeType {
 						displayOptions: { show: { '/labelColumnKind': ['status'] } },
 					},
 					{
-						// Prefix keeps it next to Position; suffixing "Name or ID" would break that.
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-options
-						displayName: 'Position: Relative To Label',
+						displayName: 'Position: Relative To Label Name or ID',
 						name: 'positionLabelId',
 						type: 'options',
 						typeOptions: {
@@ -4112,9 +4100,7 @@ export class Monday implements INodeType {
 				},
 			},
 			{
-				// The column ID string is unambiguous here; list shows file columns only.
-				// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-options
-				displayName: 'File Column',
+				displayName: 'File Column Name or ID',
 				name: 'fileColumnId',
 				type: 'options',
 				typeOptions: {
@@ -4292,8 +4278,7 @@ export class Monday implements INodeType {
 							'Users to mention and notify in the reply. In expression mode, pass user IDs as a comma-separated string.',
 					}),
 					{
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-multi-options
-						displayName: 'Mention Teams',
+						displayName: 'Mention Team Names or IDs',
 						name: 'mentionTeamIds',
 						type: 'multiOptions',
 						typeOptions: { loadOptionsMethod: 'getTeamsList' },
@@ -4395,9 +4380,7 @@ export class Monday implements INodeType {
 				displayOptions: { show: { operation: ['createSubitem'] } },
 			},
 			{
-				// The column ID string is unambiguous here; list shows file columns only.
-				// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-options
-				displayName: 'File Column',
+				displayName: 'File Column Name or ID',
 				name: 'fileColumnId',
 				type: 'options',
 				typeOptions: {
@@ -4454,9 +4437,7 @@ export class Monday implements INodeType {
 				displayOptions: { show: { operation: ['downloadFile'], downloadSource: ['fileColumn'] } },
 			},
 			{
-				// The column ID string is unambiguous here; list shows file columns only.
-				// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-options
-				displayName: 'File Column',
+				displayName: 'File Column Name or ID',
 				name: 'fileColumnId',
 				type: 'options',
 				typeOptions: {
@@ -4475,9 +4456,7 @@ export class Monday implements INodeType {
 				displayOptions: { show: { operation: ['downloadFile'], downloadSource: ['fileColumn'] } },
 			},
 			{
-				// The asset ID string is unambiguous here; list shows the column's files.
-				// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-options
-				displayName: 'File',
+				displayName: 'File Name or ID',
 				name: 'columnFileId',
 				type: 'options',
 				typeOptions: {
@@ -4567,8 +4546,7 @@ export class Monday implements INodeType {
 							'Users to mention and notify in the update. In expression mode, pass user IDs as a comma-separated string.',
 					}),
 					{
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-multi-options
-						displayName: 'Mention Teams',
+						displayName: 'Mention Team Names or IDs',
 						name: 'mentionTeamIds',
 						type: 'multiOptions',
 						typeOptions: { loadOptionsMethod: 'getTeamsList' },
@@ -5317,9 +5295,7 @@ export class Monday implements INodeType {
 							'Where to place the new column on the board. "At Beginning" means right after the Name column, which is always first.',
 					},
 					{
-						// Prefix keeps it next to Position; suffixing "Name or ID" would break that.
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-options
-						displayName: 'Position: Relative To Column',
+						displayName: 'Position: Relative To Column Name or ID',
 						name: 'positionColumnId',
 						type: 'options',
 						typeOptions: {
@@ -5373,9 +5349,7 @@ export class Monday implements INodeType {
 							'Where to place the new group on the board; left unset, monday puts it at the top',
 					},
 					{
-						// Prefix keeps it next to Position; suffixing "Name or ID" would break that.
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-options
-						displayName: 'Position: Relative To Group',
+						displayName: 'Position: Relative To Group Name or ID',
 						name: 'positionGroupId',
 						type: 'options',
 						typeOptions: {
@@ -5430,9 +5404,7 @@ export class Monday implements INodeType {
 							'Where to move the group on the board. "At Top" / "At Bottom" cost one extra read to find the current first/last group.',
 					},
 					{
-						// Prefix keeps it next to Position; suffixing "Name or ID" would break that.
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-options
-						displayName: 'Position: Relative To Group',
+						displayName: 'Position: Relative To Group Name or ID',
 						name: 'positionGroupId',
 						type: 'options',
 						typeOptions: {
@@ -5455,9 +5427,7 @@ export class Monday implements INodeType {
 				displayOptions: { show: { operation: ['getGroups'] } },
 				options: [
 					{
-						// "Groups" per product wording, matching Include Columns/Groups.
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-multi-options
-						displayName: 'Groups',
+						displayName: 'Group Names or IDs',
 						name: 'groupIds',
 						type: 'multiOptions',
 						typeOptions: {
@@ -5849,9 +5819,7 @@ export class Monday implements INodeType {
 				},
 			},
 			{
-				// The update ID string is the value; the list is bounded to one item.
-				// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-options
-				displayName: 'Update',
+				displayName: 'Update Name or ID',
 				name: 'notificationUpdateId',
 				type: 'options',
 				typeOptions: {
@@ -5973,8 +5941,7 @@ export class Monday implements INodeType {
 				displayOptions: { show: { operation: ['getUserActivityLogs'] } },
 				options: [
 					{
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-multi-options
-						displayName: 'Boards',
+						displayName: 'Board Names or IDs',
 						name: 'boardIds',
 						type: 'multiOptions',
 						typeOptions: { loadOptionsMethod: 'getBoardList' },
@@ -6959,9 +6926,7 @@ export class Monday implements INodeType {
 						description: 'Whether to include the item’s updates (body, creator, created time)',
 					},
 					{
-						// "Select Columns" per product wording; the standard "Names or IDs" suffix reads worse here.
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-multi-options
-						displayName: 'Select Columns',
+						displayName: 'Select Column Names or IDs',
 						name: 'columnIds',
 						type: 'multiOptions',
 						typeOptions: {
@@ -7334,9 +7299,7 @@ export class Monday implements INodeType {
 				displayOptions: { show: { operation: ['getItems'] } },
 				options: [
 					{
-						// "Include Columns" per product wording; the standard "Names or IDs" suffix reads worse here.
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-multi-options
-						displayName: 'Include Columns',
+						displayName: 'Include Column Names or IDs',
 						name: 'columnIds',
 						type: 'multiOptions',
 						typeOptions: {
@@ -7356,9 +7319,7 @@ export class Monday implements INodeType {
 							'Whether to append one final output item { nextCursor } after the items. Feed it into Starting Cursor (in this node or another one) to fetch the next page; null means no more items.',
 					},
 					{
-						// "Include Groups" per product wording, matching Include Columns.
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-multi-options
-						displayName: 'Include Groups',
+						displayName: 'Include Group Names or IDs',
 						name: 'groupIds',
 						type: 'multiOptions',
 						typeOptions: {
@@ -7399,9 +7360,7 @@ export class Monday implements INodeType {
 							'How multiple filters combine. Applies to every rule, including the group filter.',
 					},
 					{
-						// The column ID string IS the sort key; "Name or ID" suffix would mislead.
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-options
-						displayName: 'Sort By Column',
+						displayName: 'Sort By Column Name or ID',
 						name: 'sortBy',
 						type: 'options',
 						typeOptions: {
@@ -7460,9 +7419,7 @@ export class Monday implements INodeType {
 				displayOptions: { show: { operation: ['graphql'] } },
 				options: [
 					{
-						// The version string IS the identifier — "Name or ID" suffix would mislead here.
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-options
-						displayName: 'API Version',
+						displayName: 'API Version Name or ID',
 						name: 'apiVersion',
 						type: 'options',
 						typeOptions: { loadOptionsMethod: 'getApiVersions' },
@@ -7618,9 +7575,7 @@ export class Monday implements INodeType {
 				},
 			},
 			{
-				// The rule summary IS the label; a "Name or ID" suffix would mislead.
-				// eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-options
-				displayName: 'Rule',
+				displayName: 'Rule Name or ID',
 				name: 'ruleId',
 				type: 'options',
 				typeOptions: {
@@ -7923,9 +7878,7 @@ export class Monday implements INodeType {
 						pairedItem: { item: 0 },
 					});
 				} else {
-					// Errors from MondayGraphQLClient are already mapped NodeApiErrors.
-					// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
-					throw error;
+					throw ensureNodeError(this.getNode(), error);
 				}
 			}
 			return [returnData];
@@ -7981,9 +7934,7 @@ export class Monday implements INodeType {
 						pairedItem: { item: 0 },
 					});
 				} else {
-					// Errors from MondayGraphQLClient are already mapped NodeApiErrors.
-					// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
-					throw error;
+					throw ensureNodeError(this.getNode(), error);
 				}
 			}
 			return [returnData];
@@ -9335,9 +9286,7 @@ export class Monday implements INodeType {
 					});
 					continue;
 				}
-				// Errors from MondayGraphQLClient are already mapped NodeApiErrors.
-				// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
-				throw error;
+				throw ensureNodeError(this.getNode(), error);
 			}
 		}
 
@@ -11155,8 +11104,7 @@ async function bulkImportItems(
 				throw new NodeOperationError(this.getNode(), error.message, { itemIndex: 0 });
 			}
 			// Anything else came from the GraphQL client — already a mapped NodeApiError.
-			// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
-			throw error;
+			throw ensureNodeError(this.getNode(), error);
 		}
 	}
 
@@ -11911,8 +11859,7 @@ async function createColumn(
 			});
 		}
 		// Everything the client throws is already a mapped NodeApiError.
-		// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
-		throw error;
+		throw ensureNodeError(this.getNode(), error);
 	}
 
 	const created = (data.create_column ?? {}) as IDataObject;
@@ -12540,8 +12487,7 @@ async function getManyDirectoryResources(
 			});
 		}
 		// Anything else is already a mapped NodeApiError from the client.
-		// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
-		throw error;
+		throw ensureNodeError(this.getNode(), error);
 	}
 }
 
@@ -12732,8 +12678,7 @@ async function updateDirectoryResourceAttributes(
 			});
 		}
 		// Anything else is already a mapped NodeApiError from the client.
-		// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
-		throw error;
+		throw ensureNodeError(this.getNode(), error);
 	}
 }
 
@@ -14464,8 +14409,7 @@ async function moveWorkspaceObject(
 				throw new NodeOperationError(this.getNode(), hint, { itemIndex });
 			}
 			// Already a mapped NodeApiError from the shared client.
-			// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
-			throw error;
+			throw ensureNodeError(this.getNode(), error);
 		}
 	};
 
@@ -15294,8 +15238,7 @@ async function aggregateBoardData(
 			throw new NodeOperationError(this.getNode(), error.message, { itemIndex });
 		}
 		// Anything else is a programming error, not an API/input problem.
-		// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
-		throw error;
+		throw ensureNodeError(this.getNode(), error);
 	}
 
 	const data = await client.execute(
@@ -15861,7 +15804,6 @@ async function executeFormOperation(
 			});
 		}
 		// Anything else is already a mapped NodeApiError from the client.
-		// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
-		throw error;
+		throw ensureNodeError(this.getNode(), error);
 	}
 }

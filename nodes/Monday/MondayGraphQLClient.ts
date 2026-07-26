@@ -23,6 +23,7 @@ type RequestContext =
 export type { Board, Item, User, Group, Column, ColumnType } from '@mondaydotcomorg/api';
 
 import { MONDAY_API_URL, MONDAY_API_VERSION, MONDAY_FILE_API_URL } from './constants';
+import { ensureNodeError } from './errors';
 
 /**
  * monday.com error codes that can be extracted from GraphQL responses
@@ -305,8 +306,7 @@ export class MondayGraphQLClient {
 				const isRetryable = this.isRetryableError(error);
 				if (!isRetryable || attempt === retryAttempts) {
 					// Everything thrown above is already a mapped NodeApiError.
-					// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
-					throw error;
+					throw ensureNodeError(this.context.getNode(), error);
 				}
 
 				// Honor monday's retry_in_seconds hint when present (capped at 60s),
@@ -451,9 +451,8 @@ export class MondayGraphQLClient {
 					statusCode === undefined || statusCode === 429 || statusCode >= 500;
 				throw nodeApiError;
 			}
-			// Non-Error throw (can't happen in practice); keep the raw value.
-			// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
-			throw error;
+			// Non-Error throw (can't happen in practice).
+			throw ensureNodeError(this.context.getNode(), error);
 		}
 	}
 

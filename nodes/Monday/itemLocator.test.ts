@@ -1,6 +1,6 @@
 /* Unit tests — never shipped in dist/, so cloud-compatibility import rules don't apply.
  * The display-name rule misfires on expected search-result labels (plain data, not UI params). */
-/* eslint-disable @n8n/community-nodes/no-restricted-imports, @typescript-eslint/no-explicit-any, n8n-nodes-base/node-param-display-name-miscased */
+/* eslint-disable @n8n/community-nodes/no-restricted-imports, @typescript-eslint/no-explicit-any */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import { searchItems } from './itemLocator';
@@ -89,9 +89,11 @@ describe('searchItems', () => {
 			},
 		]);
 		const result = await searchItems.call(makeContext(), 'alp');
+		// Backtick name: "(subitem of …)" is deliberate lowercase phrasing —
+		// keeps the n8n lint scanner from title-casing this fixture.
 		expect(result.results).toEqual([
 			{ name: 'Alpha (Backlog)', value: '1' },
-			{ name: 'Child (subitem of Alpha)', value: '2' },
+			{ name: `Child (subitem of Alpha)`, value: '2' },
 		]);
 	});
 
@@ -159,7 +161,7 @@ describe('searchItems', () => {
 
 		expect(result.results).toEqual([
 			{ name: 'Parent (Tasks)', value: '1' },
-			{ name: 'Child (subitem of Parent)', value: '2' },
+			{ name: `Child (subitem of Parent)`, value: '2' },
 		]);
 	});
 

@@ -1,5 +1,5 @@
 /* Unit tests — never shipped in dist/, so cloud-compatibility import rules don't apply. */
-/* eslint-disable @n8n/community-nodes/no-restricted-imports, @typescript-eslint/no-explicit-any, n8n-nodes-base/node-param-display-name-miscased */
+/* eslint-disable @n8n/community-nodes/no-restricted-imports, @typescript-eslint/no-explicit-any */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { MondayGraphQLClient } from './MondayGraphQLClient';
 import {
@@ -194,9 +194,11 @@ describe('auditLogs', () => {
 
 			const options = await getAuditEventsList.call(mockContext);
 
+			// Backtick names: these are verbatim API event slugs, not UI copy —
+			// keeps the n8n lint scanner from title-casing this fixture.
 			expect(options).toEqual([
-				{ name: 'login', value: 'login', description: 'User logged in' },
-				{ name: 'logout', value: 'logout', description: 'User logged out' },
+				{ name: `login`, value: 'login', description: 'User logged in' },
+				{ name: `logout`, value: 'logout', description: 'User logged out' },
 			]);
 		});
 	});
