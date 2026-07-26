@@ -1,20 +1,26 @@
 {
   "name": "@mondaycom/n8n-nodes-monday",
-	"version": "0.1.1",
+	"version": "0.1.2",
   "publishConfig": {
     "access": "public"
   },
   "description": "Official monday.com community node for n8n — automate boards, items, webhooks, and agent triggers.",
   "keywords": [
     "n8n-community-node-package",
+    "n8n",
+    "n8n-nodes",
     "monday",
-    "monday.com"
+    "monday.com",
+    "work-management",
+    "project-management",
+    "automation",
+    "webhooks"
   ],
   "license": "MIT",
   "engines": {
     "node": ">=20.15"
   },
-  "homepage": "https://developer.monday.com",
+  "homepage": "https://github.com/mondaycom/n8n-nodes-monday#readme",
   "author": {
     "name": "monday.com",
     "email": "danielha@monday.com"
