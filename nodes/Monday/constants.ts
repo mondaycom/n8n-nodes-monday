@@ -47,3 +47,14 @@ export const MONDAY_AGENTS_API_VERSION = 'dev';
  */
 export const MONDAY_PLATFORM_AGENT_URL =
 	'https://api.monday.com/platform-ai-gateway/platform-agent';
+
+/** User-Agent on every authenticated monday.com API request from this node. */
+export const MONDAY_USER_AGENT = 'n8n-monday';
+
+/** Base request headers for monday.com API calls (merges with operation-specific headers). */
+export function mondayRequestHeaders(extra: Record<string, string> = {}): Record<string, string> {
+	return {
+		'User-Agent': MONDAY_USER_AGENT,
+		...extra,
+	};
+}

@@ -153,7 +153,7 @@ import {
 	type BatteryEntry,
 } from './multiLevel';
 import { findRollupStatusRuleColumns } from './itemFilters';
-import { DEFAULT_LIMIT, MONDAY_API_VERSION, MONDAY_PLATFORM_AGENT_URL } from './constants';
+import { DEFAULT_LIMIT, MONDAY_API_VERSION, MONDAY_PLATFORM_AGENT_URL, mondayRequestHeaders } from './constants';
 import { ensureNodeError } from './errors';
 import {
 	getArticleWorkspaceFolders,
@@ -10638,6 +10638,7 @@ async function runPlatformAgent(this: IExecuteFunctions, itemIndex: number): Pro
 			url: MONDAY_PLATFORM_AGENT_URL,
 			body,
 			json: true,
+			headers: mondayRequestHeaders(),
 		});
 		return buildPlatformAgentOutput(raw, contextId);
 	} catch (error) {

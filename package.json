@@ -1,6 +1,6 @@
 {
   "name": "@mondaycom/n8n-nodes-monday",
-	"version": "0.1.2",
+	"version": "0.1.3",
   "publishConfig": {
     "access": "public"
   },

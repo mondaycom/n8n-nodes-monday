@@ -22,7 +22,7 @@ type RequestContext =
 // n8n's request helpers so credentials stay in n8n's vault. See docs/DESIGN.md § API layer.
 export type { Board, Item, User, Group, Column, ColumnType } from '@mondaydotcomorg/api';
 
-import { MONDAY_API_URL, MONDAY_API_VERSION, MONDAY_FILE_API_URL } from './constants';
+import { MONDAY_API_URL, MONDAY_API_VERSION, MONDAY_FILE_API_URL, mondayRequestHeaders } from './constants';
 import { ensureNodeError } from './errors';
 
 /**
@@ -364,10 +364,10 @@ export class MondayGraphQLClient {
 				method: 'POST',
 				url: MONDAY_FILE_API_URL,
 				body,
-				headers: {
+				headers: mondayRequestHeaders({
 					'Content-Type': `multipart/form-data; boundary=${boundary}`,
 					'API-Version': this.apiVersion,
-				},
+				}),
 			},
 		);
 
@@ -405,9 +405,9 @@ export class MondayGraphQLClient {
 				body,
 				json: true,
 				returnFullResponse: options.captureInfo === true,
-				headers: {
+				headers: mondayRequestHeaders({
 					'API-Version': options.apiVersion ?? this.apiVersion,
-				},
+				}),
 			});
 
 			if (!options.captureInfo) {

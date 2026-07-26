@@ -662,6 +662,7 @@ describe('agent lifecycle (callback URL management)', () => {
 
 		const [, requestOptions] = httpRequestWithAuthentication.mock.calls[0];
 		expect(requestOptions.headers['API-Version']).toBe('dev');
+		expect(requestOptions.headers['User-Agent']).toBe('n8n-monday');
 		expect(requestOptions.body.query).toContain('update_custom_agent');
 		expect(requestOptions.body.variables).toEqual({
 			input: { agent_id: 177035, callback_url: 'https://n8n.example.com/webhook/abc' },
@@ -732,6 +733,7 @@ describe('agent lifecycle (callback URL management)', () => {
 
 		const [, requestOptions] = httpRequestWithAuthentication.mock.calls[0];
 		expect(requestOptions.headers['API-Version']).toBe('dev');
+		expect(requestOptions.headers['User-Agent']).toBe('n8n-monday');
 		expect(requestOptions.body.query).toContain('custom_agents');
 		expect(result.results).toEqual([{ name: 'Support Bot (177035)', value: '177035' }]);
 	});

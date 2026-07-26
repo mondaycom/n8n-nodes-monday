@@ -89,9 +89,10 @@ describe('MondayGraphQLClient', () => {
 			expect(mockContext.helpers.httpRequestWithAuthentication).toHaveBeenCalledWith(
 				'mondayApi',
 				expect.objectContaining({
-					headers: {
+					headers: expect.objectContaining({
 						'API-Version': '2024-10',
-					},
+						'User-Agent': 'n8n-monday',
+					}),
 				}),
 			);
 		});
@@ -464,7 +465,10 @@ describe('MondayGraphQLClient', () => {
 			expect(mockContext.helpers.httpRequestWithAuthentication).toHaveBeenCalledWith(
 				'mondayApi',
 				expect.objectContaining({
-					headers: { 'API-Version': MONDAY_API_VERSION },
+					headers: expect.objectContaining({
+						'API-Version': MONDAY_API_VERSION,
+						'User-Agent': 'n8n-monday',
+					}),
 				}),
 			);
 			// Pinned version must be a stable quarterly release (01/04/07/10), never dev/RC
@@ -483,9 +487,10 @@ describe('MondayGraphQLClient', () => {
 			expect(mockContext.helpers.httpRequestWithAuthentication).toHaveBeenCalledWith(
 				'mondayApi',
 				expect.objectContaining({
-					headers: {
+					headers: expect.objectContaining({
 						'API-Version': '2024-01',
-					},
+						'User-Agent': 'n8n-monday',
+					}),
 				}),
 			);
 		});
