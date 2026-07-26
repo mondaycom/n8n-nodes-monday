@@ -1,5 +1,5 @@
 {
-  "name": "@mondaydotcomorg/n8n-nodes-monday",
+  "name": "@mondaycom/n8n-nodes-monday",
   "version": "0.1.0",
   "description": "Official monday.com community node for n8n — automate boards, items, webhooks, and agent triggers.",
   "keywords": [

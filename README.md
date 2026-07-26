@@ -15,12 +15,12 @@ Once verified, install from the n8n nodes panel: search for **monday.com**.
 ### Self-hosted n8n
 
 1. Go to **Settings → Community Nodes**.
-2. Install `@mondaydotcomorg/n8n-nodes-monday`.
+2. Install `@mondaycom/n8n-nodes-monday`.
 
 Or from the command line inside your n8n user directory:
 
 ```bash
-npm install @mondaydotcomorg/n8n-nodes-monday
+npm install @mondaycom/n8n-nodes-monday
 ```
 
 ## Authentication
