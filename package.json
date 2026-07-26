@@ -1,0 +1,67 @@
+{
+  "name": "@mondaydotcomorg/n8n-nodes-monday",
+  "version": "0.1.0",
+  "description": "Official monday.com community node for n8n — automate boards, items, webhooks, and agent triggers.",
+  "keywords": [
+    "n8n-community-node-package",
+    "monday",
+    "monday.com"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.15"
+  },
+  "homepage": "https://developer.monday.com",
+  "author": {
+    "name": "monday.com",
+    "email": "danielha@monday.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mondaycom/n8n-nodes-monday.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mondaycom/n8n-nodes-monday/issues"
+  },
+  "scripts": {
+    "build": "n8n-node build",
+    "build:watch": "tsc --watch",
+    "dev": "n8n-node dev",
+    "lint": "n8n-node lint",
+    "lint:fix": "n8n-node lint --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "release": "n8n-node release",
+    "prepublishOnly": "n8n-node prerelease"
+  },
+  "files": [
+    "dist"
+  ],
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "strict": true,
+    "credentials": [
+      "dist/credentials/MondayApi.credentials.js"
+    ],
+    "nodes": [
+      "dist/nodes/Monday/Monday.node.js",
+      "dist/nodes/MondayTrigger/MondayTrigger.node.js"
+    ]
+  },
+  "devDependencies": {
+    "@mondaydotcomorg/api": "^14.0.0",
+    "@n8n/node-cli": "*",
+    "@types/node": "^22.10.0",
+    "@vitest/coverage-v8": "^2.1.0",
+    "eslint": "9.32.0",
+    "n8n-workflow": "2.29.3",
+    "prettier": "3.6.2",
+    "release-it": "^19.0.4",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.0"
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  }
+}
