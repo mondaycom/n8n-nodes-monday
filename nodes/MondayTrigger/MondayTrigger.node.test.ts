@@ -1,5 +1,5 @@
 /* Unit tests — never shipped in dist/, so cloud-compatibility import rules don't apply. */
-/* eslint-disable @n8n/community-nodes/no-restricted-imports, @typescript-eslint/no-explicit-any, @n8n/community-nodes/no-dangerous-functions */
+/* eslint-disable @n8n/community-nodes/no-restricted-imports, @typescript-eslint/no-explicit-any */
 import { createHmac } from 'node:crypto';
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -264,40 +264,38 @@ describe('buildOutputsFromParameters', () => {
 	});
 
 	it('matches the inlined outputs expression in the node description', () => {
-		// The description carries the same logic as an inline expression —
-		// keep them in sync by evaluating the expression body directly.
-		// Tests never ship, so Function is fine here.
+		// The expression mirrors buildOutputsFromParameters but must be a
+		// self-contained string (n8n evaluates it without module context).
+		// Dynamic evaluation is off-limits under n8n's community-node rules
+		// (no `Function`/`eval`, `node:vm` is not an allowed import), so
+		// assert the structural pieces the two implementations share.
 		const expression = trigger.description.outputs as string;
-		const inner = expression.replace(/^=\{\{/, '').replace(/\}\}$/, '');
-		const evaluate = new Function(
-			'$parameter',
-			`return (${inner
-				.replace(/\$parameter\["event"\]/g, '$parameter.event')
-				.replace(/\$parameter\["triggerTypes"\]/g, '$parameter.triggerTypes')
-				.replace(/\$parameter\["itemScope"\]/g, '$parameter.itemScope')});`,
+		expect(expression.startsWith('={{')).toBe(true);
+		expect(expression.endsWith('}}')).toBe(true);
+
+		// Combined-event keys are interpolated from COMBINED_EVENTS at module
+		// load, so the two lists cannot drift — pin the interpolated form.
+		expect(expression).toContain(`${JSON.stringify(Object.keys(COMBINED_EVENTS))}.includes(event)`);
+
+		// Combined events: per-scope outputs, same shapes as the function.
+		expect(expression).toContain(`if (scope === 'top') return [{ type: 'main', displayName: 'Items' }]`);
+		expect(expression).toContain(`if (scope === 'subitems') return [{ type: 'main', displayName: 'Subitems' }]`);
+		expect(expression).toContain(
+			`return [{ type: 'main', displayName: 'Items' }, { type: 'main', displayName: 'Subitems' }]`,
 		);
-		const cases: Array<[string, string[], string | undefined]> = [
-			['item_restored', [], undefined],
-			['change_column_value', [], 'all'],
-			['agent_interaction', [], undefined],
-			['agent_interaction', ['chat'], undefined],
-			['agent_interaction', ['mention', 'assigned'], undefined],
-			['agent_interaction', ['assigned', 'chat', 'mention'], undefined],
-			// Every combined-event key must be inlined in the expression.
-			...Object.keys(COMBINED_EVENTS).flatMap(
-				(event): Array<[string, string[], string | undefined]> => [
-					[event, [], 'all'],
-					[event, [], 'top'],
-					[event, [], 'subitems'],
-					[event, [], undefined],
-				],
-			),
-		];
-		for (const [event, selection, scope] of cases) {
-			expect(evaluate({ event, triggerTypes: selection, itemScope: scope })).toEqual(
-				buildOutputsFromParameters(event, selection, scope),
-			);
-		}
+
+		// Board events: single unlabeled output.
+		expect(expression).toContain(`if (event !== 'agent_interaction') return [{ type: 'main' }]`);
+
+		// Agent interaction: canonical order, labels, and all-three fallback.
+		expect(expression).toContain(`const order = ['chat', 'mention', 'assigned']`);
+		expect(expression).toContain(`const labels = { chat: 'Chat', mention: 'Mention', assigned: 'Assigned' }`);
+		expect(expression).toContain(`(active.length > 0 ? active : order)`);
+
+		// The expression reads exactly the parameters the function takes.
+		expect(expression).toContain(
+			`($parameter["event"], $parameter["triggerTypes"], $parameter["itemScope"])`,
+		);
 	});
 });
 

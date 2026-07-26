@@ -23,6 +23,7 @@ import {
 import { boardResourceLocator, searchBoards } from '../Monday/boardLocator';
 import { getBoardColumns } from '../Monday/columnOptions';
 import { MONDAY_AGENTS_API_VERSION } from '../Monday/constants';
+import { ensureNodeError } from '../Monday/errors';
 import { getBoardGroups } from '../Monday/groupLocator';
 import { MondayGraphQLClient } from '../Monday/MondayGraphQLClient';
 import { COLUMN_VALUES_CALCULATED_ARG, LINKED_VALUE_FRAGMENTS } from '../Monday/multiLevel';
@@ -66,8 +67,9 @@ export async function searchAgents(
  * levels (item event → its subitem-level WebhookEventType). monday has no
  * combined WebhookEventType, so "all" scope registers TWO webhooks (one
  * per level, both on the parent board) on the same URL and the node
- * routes each delivery to its own output. When adding a pair here, also
- * add its key to the inlined `description.outputs` expression below.
+ * routes each delivery to its own output. The `description.outputs`
+ * expression inlines these keys via interpolation, so a pair added here
+ * is picked up automatically.
  */
 export const COMBINED_EVENTS: Record<string, string> = {
 	create_item: 'create_subitem',
@@ -319,8 +321,9 @@ async function handleAgentWebhook(this: IWebhookFunctions): Promise<IWebhookResp
 	return { workflowData, noWebhookResponse: true };
 }
 
-// Webhook trigger nodes can't be AI tools (usableAsTool's type only allows `true`).
-// eslint-disable-next-line @n8n/community-nodes/node-usable-as-tool
+// n8n's verification lint requires `usableAsTool` on every node class, and its
+// type only allows `true`. Harmless here: n8n skips AI-tool generation for
+// trigger nodes (group or name contains "trigger").
 export class MondayTrigger implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'monday.com Trigger',
@@ -337,10 +340,11 @@ export class MondayTrigger implements INodeType {
 		// Board events: one main output. Agent Interaction: one output per
 		// selected trigger type. Combined events: Items + Subitems outputs
 		// (or one, per scope). Logic mirrored by buildOutputsFromParameters;
-		// the expression can't reference module constants, so the
-		// COMBINED_EVENTS keys are inlined here — keep both lists in sync.
+		// the expression can't reference module constants at evaluation time,
+		// so the COMBINED_EVENTS keys are interpolated into the string here
+		// at module load — the two lists can never drift apart.
 		outputs: `={{((event, types, scope) => {
-			if (['create_item', 'change_column_value', 'change_name', 'item_archived', 'item_deleted', 'create_update'].includes(event)) {
+			if (${JSON.stringify(Object.keys(COMBINED_EVENTS))}.includes(event)) {
 				if (scope === 'top') return [{ type: 'main', displayName: 'Items' }];
 				if (scope === 'subitems') return [{ type: 'main', displayName: 'Subitems' }];
 				return [{ type: 'main', displayName: 'Items' }, { type: 'main', displayName: 'Subitems' }];
@@ -544,6 +548,7 @@ export class MondayTrigger implements INodeType {
 				],
 			},
 		],
+		usableAsTool: true,
 	};
 
 	methods = {
@@ -671,8 +676,7 @@ export class MondayTrigger implements INodeType {
 							});
 						}
 						// Errors from MondayGraphQLClient are already mapped NodeApiErrors.
-						// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
-						throw error;
+						throw ensureNodeError(this.getNode(), error);
 					}
 
 					const staticData = this.getWorkflowStaticData('node');
@@ -727,8 +731,7 @@ export class MondayTrigger implements INodeType {
 							);
 						}
 						// Errors from MondayGraphQLClient are already mapped NodeApiErrors.
-						// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
-						throw error;
+						throw ensureNodeError(this.getNode(), error);
 					}
 					const id = (data.create_webhook as IDataObject | undefined)?.id;
 					return id === undefined ? undefined : String(id);
@@ -757,8 +760,7 @@ export class MondayTrigger implements INodeType {
 								// Best effort — the original error matters more.
 							}
 						}
-						// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
-						throw error;
+						throw ensureNodeError(this.getNode(), error);
 					}
 					if (webhookIds.length === 0) return false;
 					this.getWorkflowStaticData('node').webhookIds = webhookIds;

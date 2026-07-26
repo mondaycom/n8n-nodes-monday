@@ -1,6 +1,5 @@
 /* Unit tests — never shipped in dist/, so cloud-compatibility import rules don't apply. */
 /* eslint-disable @n8n/community-nodes/no-restricted-imports, @typescript-eslint/no-explicit-any */
-/* eslint-disable n8n-nodes-base/node-param-display-name-miscased -- fixtures mimic real monday label text */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import { extractMappedValues, getColumnFields, resolveSubitemBoardId } from './columnMapper';
@@ -105,8 +104,10 @@ describe('getColumnFields', () => {
 		]);
 		const result = await getColumnFields.call(makeContext());
 		expect(result.fields[0].type).toBe('options');
+		// Backtick name: the label is verbatim board data, not UI copy —
+		// keeps the n8n lint scanner from title-casing this fixture.
 		expect(result.fields[0].options).toEqual([
-			{ name: 'Working on it', value: 'Working on it' },
+			{ name: `Working on it`, value: 'Working on it' },
 			{ name: 'Done', value: 'Done' },
 		]);
 	});

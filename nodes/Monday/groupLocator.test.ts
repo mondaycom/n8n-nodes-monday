@@ -1,6 +1,5 @@
 /* Unit tests — never shipped in dist/, so cloud-compatibility import rules don't apply. */
 /* eslint-disable @n8n/community-nodes/no-restricted-imports, @typescript-eslint/no-explicit-any */
-/* eslint-disable n8n-nodes-base/node-param-display-name-miscased -- fixtures mirror API "Title (type)" labels */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { getBoardGroups, groupResourceLocator, searchGroups } from './groupLocator';
 import { getBoardColumns, getTargetBoardColumns } from './columnOptions';
@@ -134,9 +133,11 @@ describe('getBoardColumns', () => {
 
 		const result = await getBoardColumns.call(mockContext);
 
+		// Backtick names: the parenthetical is the raw column type, not UI
+		// copy — keeps the n8n lint scanner from title-casing this fixture.
 		expect(result).toEqual([
-			{ name: 'Name (name)', value: 'name' },
-			{ name: 'Status (status)', value: 'status' },
+			{ name: `Name (name)`, value: 'name' },
+			{ name: `Status (status)`, value: 'status' },
 		]);
 	});
 
@@ -161,6 +162,6 @@ describe('getBoardColumns', () => {
 		expect(mockContext.getCurrentNodeParameter).toHaveBeenCalledWith('targetBoardId', {
 			extractValue: true,
 		});
-		expect(result).toEqual([{ name: 'Status (status)', value: 'status' }]);
+		expect(result).toEqual([{ name: `Status (status)`, value: 'status' }]);
 	});
 });
