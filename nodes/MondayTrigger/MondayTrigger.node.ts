@@ -14,7 +14,7 @@ import type { AgentTriggerType } from '../Monday/agentWebhook';
 import {
 	AGENT_SSE_HEADERS,
 	AGENT_TRIGGER_TYPES,
-	AGENT_TRIGGER_TYPE_LABELS,
+	AGENT_TRIGGER_TYPE_LABELSS,
 	buildAgentSseBody,
 	normalizeTriggerType,
 	resolveSelectedTriggerTypes,
