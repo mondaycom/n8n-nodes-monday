@@ -1,6 +1,9 @@
 {
   "name": "@mondaycom/n8n-nodes-monday",
   "version": "0.1.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "Official monday.com community node for n8n — automate boards, items, webhooks, and agent triggers.",
   "keywords": [
     "n8n-community-node-package",
