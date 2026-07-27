@@ -178,7 +178,7 @@ Existing workflows using the built-in node are not auto-migrated. Create new wor
 
 ### Resource picker empty or slow
 
-- Use search or paste a board/item ID or URL directly — pickers do not load entire accounts.
+- Use search, or switch the picker to **By ID** and paste the board/item ID directly — pickers do not load entire accounts.
 - Confirm the credential has access to the workspace that owns the resource.
 
 ### Getting help

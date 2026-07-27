@@ -217,7 +217,14 @@ import {
 	groupResourceLocator,
 	searchGroups,
 } from './groupLocator';
-import { itemResourceLocator, searchItems } from './itemLocator';
+import {
+	HIDE_UNTIL_BOARD_SELECTED,
+	itemIdTextProperty,
+	itemInputModeProperty,
+	itemListOnlyResourceLocator,
+	itemResourceLocator,
+	searchItems,
+} from './itemLocator';
 import {
 	extractWorkspaceId,
 	searchWorkspaces,
@@ -3265,9 +3272,7 @@ export class Monday implements INodeType {
 							'updateItem',
 							'bulkImport',
 							'clearColumnValues',
-							'getItem',
 							'getColumnValue',
-							'getItemSubscribers',
 							'moveItem',
 							'duplicateItem',
 							'archiveOrDeleteBoard',
@@ -3286,7 +3291,6 @@ export class Monday implements INodeType {
 							'deleteColumn',
 							'addColumnLabel',
 							'updateColumnLabel',
-							'createUpdate',
 							'addFileToColumn',
 							'createSubitem',
 							'createTimelineItem',
@@ -3301,16 +3305,51 @@ export class Monday implements INodeType {
 					show: {
 						operation: [
 							'updateItem',
-							'getItem',
 							'getColumnValue',
-							'getItemSubscribers',
 							'moveItem',
 							'duplicateItem',
-							'createUpdate',
 							'addFileToColumn',
 							'createTimelineItem',
 							'getTimelineItems',
 						],
+					},
+				},
+			},
+			{
+				// Item-only operations: the mutation/query needs just the
+				// globally unique item ID, so the board picker is shown only
+				// when the user wants to pick the item from a list.
+				...itemInputModeProperty,
+				displayOptions: {
+					show: { operation: ['createUpdate', 'getItem', 'getItemSubscribers'] },
+				},
+			},
+			{
+				...boardResourceLocator,
+				description: 'The board holding the item — used only to pick the item from the list',
+				displayOptions: {
+					show: {
+						operation: ['createUpdate', 'getItem', 'getItemSubscribers'],
+						itemInputMode: ['list'],
+					},
+				},
+			},
+			{
+				...itemListOnlyResourceLocator,
+				displayOptions: {
+					show: {
+						operation: ['createUpdate', 'getItem', 'getItemSubscribers'],
+						itemInputMode: ['list'],
+					},
+					hide: HIDE_UNTIL_BOARD_SELECTED,
+				},
+			},
+			{
+				...itemIdTextProperty,
+				displayOptions: {
+					show: {
+						operation: ['createUpdate', 'getItem', 'getItemSubscribers'],
+						itemInputMode: ['id'],
 					},
 				},
 			},
@@ -4479,12 +4518,28 @@ export class Monday implements INodeType {
 				displayOptions: { show: { operation: ['downloadFile'] } },
 			},
 			{
-				...boardResourceLocator,
+				...itemInputModeProperty,
 				displayOptions: { show: { operation: ['getUpdates'], updatesScope: ['item'] } },
 			},
 			{
-				...itemResourceLocator,
-				displayOptions: { show: { operation: ['getUpdates'], updatesScope: ['item'] } },
+				...boardResourceLocator,
+				description: 'The board holding the item — used only to pick the item from the list',
+				displayOptions: {
+					show: { operation: ['getUpdates'], updatesScope: ['item'], itemInputMode: ['list'] },
+				},
+			},
+			{
+				...itemListOnlyResourceLocator,
+				displayOptions: {
+					show: { operation: ['getUpdates'], updatesScope: ['item'], itemInputMode: ['list'] },
+					hide: HIDE_UNTIL_BOARD_SELECTED,
+				},
+			},
+			{
+				...itemIdTextProperty,
+				displayOptions: {
+					show: { operation: ['getUpdates'], updatesScope: ['item'], itemInputMode: ['id'] },
+				},
 			},
 			{
 				displayName: 'Column Name or ID',
@@ -5808,14 +5863,50 @@ export class Monday implements INodeType {
 			},
 			{
 				...boardResourceLocator,
-				description: 'The board the notification links to (or the board holding the item/update)',
-				displayOptions: { show: { operation: ['createNotification'] } },
+				description: 'The board the notification links to',
+				displayOptions: {
+					show: { operation: ['createNotification'], notificationTarget: ['board'] },
+				},
 			},
 			{
-				...itemResourceLocator,
-				description: 'The item the notification links to (or the item holding the update)',
+				...itemInputModeProperty,
 				displayOptions: {
 					show: { operation: ['createNotification'], notificationTarget: ['item', 'update'] },
+				},
+			},
+			{
+				...boardResourceLocator,
+				description: 'The board holding the item — used only to pick the item from the list',
+				displayOptions: {
+					show: {
+						operation: ['createNotification'],
+						notificationTarget: ['item', 'update'],
+						itemInputMode: ['list'],
+					},
+				},
+			},
+			{
+				...itemListOnlyResourceLocator,
+				description: 'The item the notification links to (or the item holding the update)',
+				displayOptions: {
+					show: {
+						operation: ['createNotification'],
+						notificationTarget: ['item', 'update'],
+						itemInputMode: ['list'],
+					},
+					hide: HIDE_UNTIL_BOARD_SELECTED,
+				},
+			},
+			{
+				...itemIdTextProperty,
+				description:
+					'The ID of the item the notification links to (or the item holding the update)',
+				displayOptions: {
+					show: {
+						operation: ['createNotification'],
+						notificationTarget: ['item', 'update'],
+						itemInputMode: ['id'],
+					},
 				},
 			},
 			{
@@ -5824,7 +5915,9 @@ export class Monday implements INodeType {
 				type: 'options',
 				typeOptions: {
 					loadOptionsMethod: 'getItemUpdatesList',
-					loadOptionsDependsOn: ['itemId.value'],
+					// Both paths: itemId is a resourceLocator in From Board mode
+					// and a plain string in By Item ID mode.
+					loadOptionsDependsOn: ['itemId.value', 'itemId'],
 				},
 				default: '',
 				required: true,

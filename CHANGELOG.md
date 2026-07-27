@@ -5,6 +5,24 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-07-27
+
+### Changed
+
+- Operations that only need a globally unique item ID no longer require a board.
+  **Update → Create Update**, **Item → Get**, **Item → Get Subscribers**,
+  **Update → Get Many** (item scope), and **Notification → Create** (item and
+  update targets) now show an **Item Input** selector that defaults to
+  **By Item ID**, which takes the item ID as a plain text field.
+- Choosing **From Board** keeps the previous behaviour of picking a board and
+  then selecting the item from its list. The item picker stays hidden until a
+  board is selected, so it can no longer be opened in a state where it cannot
+  load options.
+- **Notification → Create** shows the board picker only for the board target.
+- Removed the **By URL** mode from the board picker. A board URL already
+  contains the board ID, so the extra parsing step only added failure modes —
+  use **From List** or **By ID** instead.
+
 ## [0.1.3] - 2026-07-26
 
 ### Changed

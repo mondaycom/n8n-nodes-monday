@@ -1,32 +1,14 @@
 /* Unit tests — never shipped in dist/, so cloud-compatibility import rules don't apply. */
 /* eslint-disable @n8n/community-nodes/no-restricted-imports, @typescript-eslint/no-explicit-any */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { BOARD_URL_REGEX, boardResourceLocator, searchBoards } from './boardLocator';
-
-describe('BOARD_URL_REGEX', () => {
-	const regex = new RegExp(BOARD_URL_REGEX);
-
-	it.each([
-		['https://acme.monday.com/boards/1234567890', '1234567890'],
-		['https://acme.monday.com/boards/1234567890/views/98765', '1234567890'],
-		['http://sub-domain.monday.com/boards/42', '42'],
-	])('extracts the board ID from %s', (url, expected) => {
-		expect(url.match(regex)?.[1]).toBe(expected);
-	});
-
-	it.each([
-		'https://acme.monday.com/pulses/123',
-		'https://example.com/boards/123',
-		'not a url',
-	])('does not match %s', (url) => {
-		expect(url.match(regex)).toBeNull();
-	});
-});
+import { boardResourceLocator, searchBoards } from './boardLocator';
 
 describe('boardResourceLocator', () => {
-	it('offers the three required modes', () => {
+	// A board URL only embeds the ID, so a URL mode would add a parsing
+	// failure mode without adding any way to reach a board.
+	it('offers From List and By ID only — no URL mode', () => {
 		const modeNames = boardResourceLocator.modes?.map((m) => m.name);
-		expect(modeNames).toEqual(['list', 'id', 'url']);
+		expect(modeNames).toEqual(['list', 'id']);
 	});
 
 	it('uses the searchBoards listSearch method with search enabled', () => {

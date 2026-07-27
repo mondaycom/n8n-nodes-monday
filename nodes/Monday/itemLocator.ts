@@ -43,6 +43,69 @@ export const itemResourceLocator: INodeProperties = {
 	],
 };
 
+/**
+ * Item selection mode switch for item-only operations (Update: Create,
+ * Item: Get, Item: Get Subscribers, Update: Get Many, Notification:
+ * Create). Item IDs are globally unique, so the board picker exists purely
+ * to power the From List item search — By Item ID skips it entirely.
+ * Declared per operation group with matching displayOptions.
+ */
+export const itemInputModeProperty: INodeProperties = {
+	displayName: 'Item Input',
+	name: 'itemInputMode',
+	type: 'options',
+	noDataExpression: true,
+	options: [
+		{
+			name: 'By Item ID',
+			value: 'id',
+			description: 'Provide the item ID directly — no board selection needed',
+		},
+		{
+			name: 'From Board',
+			value: 'list',
+			description: 'Pick a board, then pick the item from its list',
+		},
+	],
+	default: 'id',
+	description: 'How to choose the item',
+};
+
+/** The item selector reduced to its From List mode — paired with a board
+ * picker when itemInputMode is "list". */
+export const itemListOnlyResourceLocator: INodeProperties = {
+	...itemResourceLocator,
+	modes: itemResourceLocator.modes!.filter((mode) => mode.name === 'list'),
+};
+
+/**
+ * Progressive disclosure for the From Board path: keep the item picker
+ * hidden until a board is chosen, because searchItems needs `boardId` and
+ * would otherwise open to a "Parameter Board is required" error. Paired
+ * with `itemListOnlyResourceLocator` only — a locator that also offers By
+ * ID must stay visible, since that mode needs no board.
+ *
+ * displayOptions unwraps a resourceLocator to its `.value`, so `['']`
+ * matches the unselected picker. Expressions (`=...`) don't match and stay
+ * visible.
+ */
+export const HIDE_UNTIL_BOARD_SELECTED = { boardId: [''] };
+
+/**
+ * The By Item ID field: a plain text input, not a one-mode resourceLocator
+ * (which the UI still renders as a picker with a mode dropdown). Keeps the
+ * `itemId` name so execution code reads the same parameter either way.
+ */
+export const itemIdTextProperty: INodeProperties = {
+	displayName: 'Item ID',
+	name: 'itemId',
+	type: 'string',
+	default: '',
+	required: true,
+	placeholder: 'e.g. 1234567890',
+	description: 'The ID of the item to operate on',
+};
+
 const ITEM_SEARCH_PAGE_SIZE = 50;
 
 interface ItemRow {

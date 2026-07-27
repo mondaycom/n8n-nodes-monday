@@ -1,6 +1,7 @@
 /* Unit tests — never shipped in dist/, so cloud-compatibility import rules don't apply. */
 /* eslint-disable @n8n/community-nodes/no-restricted-imports */
 import type { IDataObject, IExecuteFunctions } from 'n8n-workflow';
+import { NodeHelpers } from 'n8n-workflow';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -1667,5 +1668,114 @@ describe('respondToAgentMention execute path', () => {
 			'No agent mention found in the input data',
 		);
 		expect(httpRequest).not.toHaveBeenCalled();
+	});
+});
+
+// Item-only operations (Update: Create, Item: Get, Item: Get Subscribers,
+// Update: Get Many item scope, Notification: Create item/update targets)
+// need only the globally unique item ID at runtime. The board picker exists
+// purely to power the From Board item list, so By Item ID hides it.
+describe('item input mode for item-only operations', () => {
+	const properties = new Monday().description.properties;
+	const itemOnlyOps = [
+		'createUpdate',
+		'getItem',
+		'getItemSubscribers',
+		'getUpdates',
+		'createNotification',
+	];
+
+	it('shows an Item Input selector for every item-only operation', () => {
+		const selectors = properties.filter((p) => p.name === 'itemInputMode');
+		const coveredOps = selectors.flatMap(
+			(p) => (p.displayOptions?.show?.operation ?? []) as string[],
+		);
+		expect(coveredOps.sort()).toEqual([...itemOnlyOps].sort());
+		for (const selector of selectors) {
+			expect(selector.options?.map((o) => 'value' in o && o.value)).toEqual(['id', 'list']);
+		}
+	});
+
+	it('never shows a board picker unless it powers the list mode or is the target itself', () => {
+		const boardBlocks = properties.filter((p) => p.name === 'boardId');
+		for (const block of boardBlocks) {
+			const show = block.displayOptions?.show ?? {};
+			const ops = (show.operation ?? []) as string[];
+			if (!ops.some((op) => itemOnlyOps.includes(op))) continue;
+			const gatedToListMode = show.itemInputMode?.[0] === 'list';
+			const isNotificationBoardTarget = show.notificationTarget?.[0] === 'board';
+			expect(gatedToListMode || isNotificationBoardTarget).toBe(true);
+		}
+	});
+
+	// The item list picker calls searchItems, which needs boardId — shown
+	// too early it just opens to "Parameter Board is required".
+	it('hides the item list picker until a board is selected', () => {
+		const node = { typeVersion: 1 };
+		const description = new Monday().description;
+		const itemListBlocks = properties.filter(
+			(p) => p.name === 'itemId' && p.displayOptions?.show?.itemInputMode?.[0] === 'list',
+		);
+		expect(itemListBlocks.length).toBe(3);
+
+		for (const block of itemListBlocks) {
+			const operation = (block.displayOptions!.show!.operation as string[])[0];
+			const base: IDataObject = {
+				operation,
+				itemInputMode: 'list',
+				updatesScope: 'item',
+				notificationTarget: 'item',
+			};
+			const displayed = (boardId: unknown) =>
+				NodeHelpers.displayParameter({ ...base, boardId }, block, node, description);
+
+			expect(displayed({ __rl: true, mode: 'list', value: '' })).toBe(false);
+			expect(displayed({ __rl: true, mode: 'list', value: '123' })).toBe(true);
+			// An expression can't be resolved statically, so keep it visible.
+			expect(displayed({ __rl: true, mode: 'id', value: '={{ $json.boardId }}' })).toBe(true);
+		}
+	});
+
+	it('keeps the dual-mode item locator visible without a board (By ID needs none)', () => {
+		const description = new Monday().description;
+		const dualModeBlock = properties.find(
+			(p) =>
+				p.name === 'itemId' &&
+				p.type === 'resourceLocator' &&
+				p.modes?.length === 2 &&
+				((p.displayOptions?.show?.operation ?? []) as string[]).includes('updateItem'),
+		);
+		expect(dualModeBlock).toBeDefined();
+		expect(
+			NodeHelpers.displayParameter(
+				{ operation: 'updateItem', boardId: { __rl: true, mode: 'list', value: '' } },
+				dualModeBlock!,
+				{ typeVersion: 1 },
+				description,
+			),
+		).toBe(true);
+	});
+
+	it('pairs each input mode with the matching item field', () => {
+		const itemBlocks = properties.filter(
+			(p) =>
+				p.name === 'itemId' &&
+				((p.displayOptions?.show?.operation ?? []) as string[]).some((op) =>
+					itemOnlyOps.includes(op),
+				),
+		);
+		expect(itemBlocks.length).toBeGreaterThan(0);
+		for (const block of itemBlocks) {
+			const inputMode = block.displayOptions?.show?.itemInputMode?.[0];
+			if (inputMode === 'list') {
+				expect(block.type).toBe('resourceLocator');
+				expect(block.modes?.map((m) => m.name)).toEqual(['list']);
+			} else {
+				expect(inputMode).toBe('id');
+				// A plain text field, not a single-mode picker.
+				expect(block.type).toBe('string');
+				expect(block.modes).toBeUndefined();
+			}
+		}
 	});
 });

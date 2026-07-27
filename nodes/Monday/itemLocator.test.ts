@@ -3,7 +3,13 @@
 /* eslint-disable @n8n/community-nodes/no-restricted-imports, @typescript-eslint/no-explicit-any */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-import { searchItems } from './itemLocator';
+import {
+	itemIdTextProperty,
+	itemInputModeProperty,
+	itemListOnlyResourceLocator,
+	itemResourceLocator,
+	searchItems,
+} from './itemLocator';
 
 const httpRequestWithAuthentication = vi.fn();
 
@@ -29,6 +35,34 @@ function mockSearchResponse(results: unknown[]) {
 		data: { search: { items: { results } } },
 	});
 }
+
+// Item-only operations show either a board + list picker or a bare ID
+// field; both variants keep the itemId name so execution code is shared.
+describe('item locator variants', () => {
+	it('the full locator offers list and id modes', () => {
+		expect(itemResourceLocator.modes?.map((m) => m.name)).toEqual(['list', 'id']);
+	});
+
+	it('the list-only variant keeps just the board-scoped list mode', () => {
+		expect(itemListOnlyResourceLocator.name).toBe('itemId');
+		expect(itemListOnlyResourceLocator.modes?.map((m) => m.name)).toEqual(['list']);
+		expect(itemListOnlyResourceLocator.default).toEqual({ mode: 'list', value: '' });
+	});
+
+	// A one-mode resourceLocator still renders as a picker with a mode
+	// dropdown, so By Item ID uses a plain text field instead.
+	it('the by-ID field is a plain text input under the same parameter name', () => {
+		expect(itemIdTextProperty.name).toBe('itemId');
+		expect(itemIdTextProperty.type).toBe('string');
+		expect(itemIdTextProperty.displayName).toBe('Item ID');
+		expect(itemIdTextProperty.default).toBe('');
+		expect(itemIdTextProperty.modes).toBeUndefined();
+	});
+
+	it('defaults to By Item ID so no board is required out of the box', () => {
+		expect(itemInputModeProperty.default).toBe('id');
+	});
+});
 
 describe('searchItems', () => {
 	beforeEach(() => {

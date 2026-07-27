@@ -8,14 +8,10 @@ import { SEARCH_MAX_LIMIT } from './accountSearch';
 import { MondayGraphQLClient } from './MondayGraphQLClient';
 
 /**
- * Matches a board ID inside any monday board URL, e.g.
- * https://acme.monday.com/boards/12345, .../boards/12345/views/67890
- */
-export const BOARD_URL_REGEX = 'https?://[^/]+\\.monday\\.com/boards/([0-9]+)';
-
-/**
  * Shared Board selector: the CRITICAL SCALE PATTERN for this package.
- * Three modes — From List (searchable, paginated, capped), By ID, By URL.
+ * Two modes — From List (searchable, paginated, capped) and By ID. A board
+ * URL carries no information beyond the ID it embeds, so pasting URLs is
+ * not offered — it would only add a parsing failure mode.
  * Never enumerates an account: with no filter typed, the list mode pages
  * 50 recently-used boards at a time; a typed filter switches to the
  * cross-entity search API (search.boards), which matches server-side
@@ -52,25 +48,6 @@ export const boardResourceLocator: INodeProperties = {
 					},
 				},
 			],
-		},
-		{
-			displayName: 'By URL',
-			name: 'url',
-			type: 'string',
-			placeholder: 'e.g. https://yourorg.monday.com/boards/1234567890',
-			validation: [
-				{
-					type: 'regex',
-					properties: {
-						regex: BOARD_URL_REGEX,
-						errorMessage: 'Not a valid monday.com board URL',
-					},
-				},
-			],
-			extractValue: {
-				type: 'regex',
-				regex: BOARD_URL_REGEX,
-			},
 		},
 	],
 };
