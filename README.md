@@ -121,7 +121,12 @@ By default, n8n may register webhooks using `localhost`, which monday.com cannot
 
 ### Agent Interaction trigger
 
-Custom agent triggers (chat, mention, assigned) require a reachable **HTTPS** webhook URL. monday.com rejects callback URLs that use `localhost` or plain `http`. Set `WEBHOOK_URL` as above, then connect your agent in monday.com to the webhook URL shown on the trigger node. See the [monday developer portal](https://developer.monday.com) for agent setup.
+Custom agent triggers (chat, mention, assigned) require:
+
+1. A **Custom Agent API token** credential (the `api_token` shown when the agent was created — not an owner/personal token). The Connected Agent field on the trigger confirms the agent name and ID.
+2. A reachable **HTTPS** webhook URL (`WEBHOOK_URL` as above). monday.com rejects `localhost` and plain `http`. On activation the trigger registers the callback URL and signing secret automatically.
+
+See the [monday developer portal](https://developer.monday.com) for agent setup.
 
 ## AI Agent tool usage
 
@@ -172,9 +177,10 @@ Existing workflows using the built-in node are not auto-migrated. Create new wor
 
 ### Agent Interaction not responding
 
+- Confirm the trigger credential is a Custom Agent API token (Connected Agent shows the agent name, not a warning).
 - Confirm `WEBHOOK_URL` is a public **HTTPS** URL.
 - For chat triggers, ensure the workflow includes a response path (for example **Respond to Agent Chat**).
-- Verify the agent is linked to the webhook URL shown on the trigger node.
+- Deactivate and reactivate the workflow so the callback URL and signing secret are re-registered.
 
 ### Resource picker empty or slow
 

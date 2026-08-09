@@ -38,6 +38,12 @@ export const DEFAULT_LIMIT = 50;
 export const MONDAY_AGENTS_API_VERSION = 'dev';
 
 /**
+ * Custom Agent (EXTERNAL) API tokens authenticate as users with
+ * `me.kind === 'external_agent_member'`. Agent Interaction registration must
+ * use that token (omit agent_id on update_custom_agent) — not an owner token.
+ */
+
+/**
  * REST endpoint of the monday.com Platform Agent (Sidekick-style agent).
  * One user message per request (`prompt`), optional `contextId` for
  * conversation continuity; the reply comes back as `response`. The API

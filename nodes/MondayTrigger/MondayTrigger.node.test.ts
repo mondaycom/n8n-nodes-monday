@@ -1,5 +1,5 @@
 /* Unit tests — never shipped in dist/, so cloud-compatibility import rules don't apply. */
-/* eslint-disable @n8n/community-nodes/no-restricted-imports, @typescript-eslint/no-explicit-any */
+/* eslint-disable @n8n/community-nodes/no-restricted-imports, @typescript-eslint/no-explicit-any, @n8n/community-nodes/no-dangerous-functions */
 import { createHmac } from 'node:crypto';
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -9,9 +9,9 @@ import {
 	buildOutputsFromParameters,
 	buildWebhookConfig,
 	COMBINED_EVENTS,
+	loadConnectedAgentOptions,
 	MondayTrigger,
 	routeCombinedEvent,
-	searchAgents,
 } from './MondayTrigger.node';
 
 const httpRequestWithAuthentication = vi.fn();
@@ -264,38 +264,40 @@ describe('buildOutputsFromParameters', () => {
 	});
 
 	it('matches the inlined outputs expression in the node description', () => {
-		// The expression mirrors buildOutputsFromParameters but must be a
-		// self-contained string (n8n evaluates it without module context).
-		// Dynamic evaluation is off-limits under n8n's community-node rules
-		// (no `Function`/`eval`, `node:vm` is not an allowed import), so
-		// assert the structural pieces the two implementations share.
+		// The description carries the same logic as an inline expression —
+		// keep them in sync by evaluating the expression body directly.
+		// Tests never ship, so Function is fine here.
 		const expression = trigger.description.outputs as string;
-		expect(expression.startsWith('={{')).toBe(true);
-		expect(expression.endsWith('}}')).toBe(true);
-
-		// Combined-event keys are interpolated from COMBINED_EVENTS at module
-		// load, so the two lists cannot drift — pin the interpolated form.
-		expect(expression).toContain(`${JSON.stringify(Object.keys(COMBINED_EVENTS))}.includes(event)`);
-
-		// Combined events: per-scope outputs, same shapes as the function.
-		expect(expression).toContain(`if (scope === 'top') return [{ type: 'main', displayName: 'Items' }]`);
-		expect(expression).toContain(`if (scope === 'subitems') return [{ type: 'main', displayName: 'Subitems' }]`);
-		expect(expression).toContain(
-			`return [{ type: 'main', displayName: 'Items' }, { type: 'main', displayName: 'Subitems' }]`,
+		const inner = expression.replace(/^=\{\{/, '').replace(/\}\}$/, '');
+		const evaluate = new Function(
+			'$parameter',
+			`return (${inner
+				.replace(/\$parameter\["event"\]/g, '$parameter.event')
+				.replace(/\$parameter\["triggerTypes"\]/g, '$parameter.triggerTypes')
+				.replace(/\$parameter\["itemScope"\]/g, '$parameter.itemScope')});`,
 		);
-
-		// Board events: single unlabeled output.
-		expect(expression).toContain(`if (event !== 'agent_interaction') return [{ type: 'main' }]`);
-
-		// Agent interaction: canonical order, labels, and all-three fallback.
-		expect(expression).toContain(`const order = ['chat', 'mention', 'assigned']`);
-		expect(expression).toContain(`const labels = { chat: 'Chat', mention: 'Mention', assigned: 'Assigned' }`);
-		expect(expression).toContain(`(active.length > 0 ? active : order)`);
-
-		// The expression reads exactly the parameters the function takes.
-		expect(expression).toContain(
-			`($parameter["event"], $parameter["triggerTypes"], $parameter["itemScope"])`,
-		);
+		const cases: Array<[string, string[], string | undefined]> = [
+			['item_restored', [], undefined],
+			['change_column_value', [], 'all'],
+			['agent_interaction', [], undefined],
+			['agent_interaction', ['chat'], undefined],
+			['agent_interaction', ['mention', 'assigned'], undefined],
+			['agent_interaction', ['assigned', 'chat', 'mention'], undefined],
+			// Every combined-event key must be inlined in the expression.
+			...Object.keys(COMBINED_EVENTS).flatMap(
+				(event): Array<[string, string[], string | undefined]> => [
+					[event, [], 'all'],
+					[event, [], 'top'],
+					[event, [], 'subitems'],
+					[event, [], undefined],
+				],
+			),
+		];
+		for (const [event, selection, scope] of cases) {
+			expect(evaluate({ event, triggerTypes: selection, itemScope: scope })).toEqual(
+				buildOutputsFromParameters(event, selection, scope),
+			);
+		}
 	});
 });
 
@@ -643,99 +645,151 @@ describe('agent lifecycle (callback URL management)', () => {
 		httpRequestWithAuthentication.mockReset();
 	});
 
-	const agentParams = (agentId: string) => ({ event: 'agent_interaction', agentId });
+	const agentParams = () => ({ event: 'agent_interaction' });
 
-	it('checkExists returns true (skip create) only when no agent ID is set', async () => {
-		expect(await hooks.checkExists.call(makeHookContext(agentParams(''), {}))).toBe(true);
-		expect(await hooks.checkExists.call(makeHookContext(agentParams('177035'), {}))).toBe(false);
+	const mockAgentIdentity = () => {
+		httpRequestWithAuthentication.mockResolvedValueOnce({
+			data: {
+				me: {
+					id: '110197650',
+					name: 'n8n test k',
+					kind: 'external_agent_member',
+					email: 'agent-187604@agent.monday.com',
+				},
+			},
+		});
+		// custom_agents enrichment fails for agent tokens — fall back to me/email.
+		httpRequestWithAuthentication.mockResolvedValueOnce({
+			errors: [{ message: 'Internal server error', extensions: { code: 'INTERNAL_SERVER_ERROR' } }],
+		});
+	};
+
+	it('checkExists is true only when callback URL and signing secret are persisted', async () => {
+		expect(await hooks.checkExists.call(makeHookContext(agentParams(), {}))).toBe(false);
+		expect(
+			await hooks.checkExists.call(
+				makeHookContext(agentParams(), {
+					callbackUrl: 'https://n8n.example.com/webhook/abc',
+					signingSecret: 'abc',
+				}),
+			),
+		).toBe(true);
+		expect(
+			await hooks.checkExists.call(
+				makeHookContext(agentParams(), {
+					callbackUrl: 'https://other.example.com/webhook/abc',
+					signingSecret: 'abc',
+				}),
+			),
+		).toBe(false);
 		expect(httpRequestWithAuthentication).not.toHaveBeenCalled();
 	});
 
-	it('create repoints the callback URL via update_custom_agent on the dev API version', async () => {
+	it('create registers callback via agent token (no agent_id) and stores signing_secret', async () => {
+		mockAgentIdentity();
 		httpRequestWithAuthentication.mockResolvedValueOnce({
-			data: { update_custom_agent: { success: true } },
+			data: {
+				update_custom_agent: { success: true, signing_secret: 'deadbeef'.repeat(8) },
+			},
 		});
 		const staticData: Record<string, unknown> = {};
-		const context = makeHookContext(agentParams(' 177035 '), staticData);
+		const context = makeHookContext(agentParams(), staticData);
 
 		expect(await hooks.create.call(context)).toBe(true);
 
-		const [, requestOptions] = httpRequestWithAuthentication.mock.calls[0];
-		expect(requestOptions.headers['API-Version']).toBe('dev');
-		expect(requestOptions.headers['User-Agent']).toBe('n8n-monday');
-		expect(requestOptions.body.query).toContain('update_custom_agent');
-		expect(requestOptions.body.variables).toEqual({
-			input: { agent_id: 177035, callback_url: 'https://n8n.example.com/webhook/abc' },
+		// me + custom_agents + update_custom_agent
+		expect(httpRequestWithAuthentication).toHaveBeenCalledTimes(3);
+		const [, updateRequest] = httpRequestWithAuthentication.mock.calls[2];
+		expect(updateRequest.headers['API-Version']).toBe('dev');
+		expect(updateRequest.headers['User-Agent']).toBe('n8n-monday');
+		expect(updateRequest.body.query).toContain('update_custom_agent');
+		expect(updateRequest.body.query).toContain('signing_secret');
+		expect(updateRequest.body.variables).toEqual({
+			input: { callback_url: 'https://n8n.example.com/webhook/abc' },
 		});
-		expect(staticData).toEqual({
-			agentId: '177035',
+		expect(staticData).toMatchObject({
+			agentId: '187604',
+			agentName: 'n8n test k',
+			agentUserId: '110197650',
+			agentKind: 'EXTERNAL',
 			callbackUrl: 'https://n8n.example.com/webhook/abc',
+			signingSecret: 'deadbeef'.repeat(8),
 		});
 	});
 
-	it('create is a no-op without an agent ID (manual URL management)', async () => {
-		expect(await hooks.create.call(makeHookContext(agentParams(''), {}))).toBe(true);
-		expect(httpRequestWithAuthentication).not.toHaveBeenCalled();
+	it('create rejects a non-agent (owner) token before updating the callback', async () => {
+		httpRequestWithAuthentication.mockResolvedValueOnce({
+			data: { me: { id: '109088039', name: 'Daniel Hai', kind: 'admin', email: 'x@y.z' } },
+		});
+		await expect(hooks.create.call(makeHookContext(agentParams(), {}))).rejects.toMatchObject({
+			message: 'This credential is not a Custom Agent API token',
+			description: expect.stringContaining('external_agent'),
+		});
+		expect(httpRequestWithAuthentication).toHaveBeenCalledTimes(1);
 	});
 
-	it('create rejects a non-numeric agent ID before any API call', async () => {
-		await expect(
-			hooks.create.call(makeHookContext(agentParams('my-agent'), {})),
-		).rejects.toMatchObject({ message: expect.stringContaining('must be numeric') });
-		expect(httpRequestWithAuthentication).not.toHaveBeenCalled();
-	});
-
-	it('create maps the not-owner error to an actionable message', async () => {
+	it('create maps the not-owner/forbidden error to an actionable message', async () => {
+		mockAgentIdentity();
 		httpRequestWithAuthentication.mockResolvedValueOnce({
 			errors: [
 				{ message: 'Not authorized to update this agent', extensions: { code: 'FORBIDDEN' } },
 			],
 		});
-		await expect(
-			hooks.create.call(makeHookContext(agentParams('177035'), {})),
-		).rejects.toMatchObject({
+		await expect(hooks.create.call(makeHookContext(agentParams(), {}))).rejects.toMatchObject({
 			message: 'Not authorized to update this agent',
-			description: expect.stringContaining('owner'),
+			description: expect.stringContaining('api_token'),
 		});
 	});
 
 	it('create maps the HTTPS-only URL rejection to an actionable message', async () => {
-		// Live error text from update_custom_agent (verified 2026-07-16).
+		mockAgentIdentity();
 		httpRequestWithAuthentication.mockResolvedValueOnce({
 			errors: [{ message: 'callback_url must use HTTPS' }],
 		});
-		await expect(
-			hooks.create.call(makeHookContext(agentParams('177035'), {})),
-		).rejects.toMatchObject({
+		await expect(hooks.create.call(makeHookContext(agentParams(), {}))).rejects.toMatchObject({
 			message: 'monday.com rejected the webhook URL',
 			description: expect.stringContaining('WEBHOOK_URL'),
 		});
 	});
 
+	it('create fails when signing_secret is missing from the response', async () => {
+		mockAgentIdentity();
+		httpRequestWithAuthentication.mockResolvedValueOnce({
+			data: { update_custom_agent: { success: true, signing_secret: null } },
+		});
+		await expect(hooks.create.call(makeHookContext(agentParams(), {}))).rejects.toMatchObject({
+			message: expect.stringContaining('signing_secret'),
+		});
+	});
+
 	it('delete never touches the agent, only clears static data', async () => {
-		const staticData: Record<string, unknown> = { agentId: '177035', callbackUrl: 'x' };
-		expect(await hooks.delete.call(makeHookContext(agentParams('177035'), staticData))).toBe(true);
+		const staticData: Record<string, unknown> = {
+			agentId: '187604',
+			agentName: 'n8n test k',
+			callbackUrl: 'x',
+			signingSecret: 'secret',
+		};
+		expect(await hooks.delete.call(makeHookContext(agentParams(), staticData))).toBe(true);
 		expect(staticData).toEqual({});
 		expect(httpRequestWithAuthentication).not.toHaveBeenCalled();
 	});
 
-	it('searchAgents lists agents on the dev API version and filters client-side', async () => {
+	it('loadConnectedAgentOptions surfaces agent metadata from the token', async () => {
+		mockAgentIdentity();
+		const result = await loadConnectedAgentOptions.call(makeHookContext({}, {}));
+		expect(result).toHaveLength(1);
+		expect(result[0].value).toBe('187604');
+		expect(result[0].name).toContain('n8n test k');
+		expect(result[0].name).toContain('187604');
+	});
+
+	it('loadConnectedAgentOptions returns a warning option for owner tokens', async () => {
 		httpRequestWithAuthentication.mockResolvedValueOnce({
-			data: {
-				custom_agents: [
-					{ id: 177035, state: 'active', profile: { name: 'Support Bot' } },
-					{ id: 52822, state: 'active', profile: { name: 'n8n test k' } },
-				],
-			},
+			data: { me: { id: '1', name: 'Owner', kind: 'admin', email: null } },
 		});
-
-		const result = await searchAgents.call(makeHookContext({}, {}), 'support');
-
-		const [, requestOptions] = httpRequestWithAuthentication.mock.calls[0];
-		expect(requestOptions.headers['API-Version']).toBe('dev');
-		expect(requestOptions.headers['User-Agent']).toBe('n8n-monday');
-		expect(requestOptions.body.query).toContain('custom_agents');
-		expect(result.results).toEqual([{ name: 'Support Bot (177035)', value: '177035' }]);
+		const result = await loadConnectedAgentOptions.call(makeHookContext({}, {}));
+		expect(result[0].value).toBe('');
+		expect(result[0].name).toContain('⚠️');
 	});
 });
 
@@ -764,10 +818,13 @@ describe('webhook() agent events', () => {
 			chatBody,
 			{
 				event: 'agent_interaction',
-				agentOptions: { signingSecret: 'secret' },
 				triggerTypes: ['chat', 'mention', 'assigned'],
 			},
-			{ headers: signedHeaders('secret', raw), rawBody: Buffer.from(raw) },
+			{
+				headers: signedHeaders('secret', raw),
+				rawBody: Buffer.from(raw),
+				staticData: { signingSecret: 'secret', agentId: '177035', agentName: 'E2E Test Agent' },
+			},
 		);
 
 		const result = await trigger.webhook.call(context);
@@ -782,6 +839,7 @@ describe('webhook() agent events', () => {
 			triggerType: 'chat',
 			text: 'hello agent',
 			agentId: '177035',
+			agentName: 'E2E Test Agent',
 			stream: true,
 		});
 		expect(result.workflowData![1]).toHaveLength(0);
@@ -794,10 +852,13 @@ describe('webhook() agent events', () => {
 			chatBody,
 			{
 				event: 'agent_interaction',
-				agentOptions: { signingSecret: 'secret' },
 				triggerTypes: ['chat'],
 			},
-			{ headers: signedHeaders('wrong-secret', raw), rawBody: Buffer.from(raw) },
+			{
+				headers: signedHeaders('wrong-secret', raw),
+				rawBody: Buffer.from(raw),
+				staticData: { signingSecret: 'secret' },
+			},
 		);
 
 		const result = await trigger.webhook.call(context);
@@ -807,15 +868,18 @@ describe('webhook() agent events', () => {
 		expect(result).toEqual({ noWebhookResponse: true });
 	});
 
-	it('skips verification when no signing secret is configured', async () => {
-		const { context, status } = makeWebhookContext(chatBody, {
+	it('rejects deliveries when no signing secret was persisted on activation', async () => {
+		const { context, status, json } = makeWebhookContext(chatBody, {
 			event: 'agent_interaction',
 			triggerTypes: ['chat'],
 		});
 
 		const result = await trigger.webhook.call(context);
-		expect(status).not.toHaveBeenCalledWith(401);
-		expect(result.workflowData![0]).toHaveLength(1);
+		expect(status).toHaveBeenCalledWith(401);
+		expect(json).toHaveBeenCalledWith(
+			expect.objectContaining({ error: expect.stringContaining('signing secret') }),
+		);
+		expect(result).toEqual({ noWebhookResponse: true });
 	});
 
 	it('routes the live "mentioned" variant to the mention output and acknowledges immediately', async () => {
@@ -825,10 +889,19 @@ describe('webhook() agent events', () => {
 			payload: { text: 'do the thing', itemId: 123, boardId: 456 },
 			timestamp: '2026-07-16T12:00:00.000Z',
 		};
-		const { context, send } = makeWebhookContext(body, {
-			event: 'agent_interaction',
-			triggerTypes: ['chat', 'mention', 'assigned'],
-		});
+		const raw = JSON.stringify(body);
+		const { context, send } = makeWebhookContext(
+			body,
+			{
+				event: 'agent_interaction',
+				triggerTypes: ['chat', 'mention', 'assigned'],
+			},
+			{
+				headers: signedHeaders('secret', raw),
+				rawBody: Buffer.from(raw),
+				staticData: { signingSecret: 'secret' },
+			},
+		);
 
 		const result = await trigger.webhook.call(context);
 		expect(result.workflowData![1][0].json).toMatchObject({
@@ -843,10 +916,19 @@ describe('webhook() agent events', () => {
 
 	it('acknowledges unselected trigger types without starting the workflow', async () => {
 		const body = { ...chatBody, triggerType: 'assigned' };
-		const { context, send } = makeWebhookContext(body, {
-			event: 'agent_interaction',
-			triggerTypes: ['chat'],
-		});
+		const raw = JSON.stringify(body);
+		const { context, send } = makeWebhookContext(
+			body,
+			{
+				event: 'agent_interaction',
+				triggerTypes: ['chat'],
+			},
+			{
+				headers: signedHeaders('secret', raw),
+				rawBody: Buffer.from(raw),
+				staticData: { signingSecret: 'secret' },
+			},
+		);
 
 		const result = await trigger.webhook.call(context);
 		expect(result).toEqual({ noWebhookResponse: true });
@@ -856,10 +938,19 @@ describe('webhook() agent events', () => {
 
 	it('acknowledges unselected types with JSON when the request opted out of streaming', async () => {
 		const body = { ...chatBody, triggerType: 'assigned', stream: false };
-		const { context, json, send } = makeWebhookContext(body, {
-			event: 'agent_interaction',
-			triggerTypes: ['chat'],
-		});
+		const raw = JSON.stringify(body);
+		const { context, json, send } = makeWebhookContext(
+			body,
+			{
+				event: 'agent_interaction',
+				triggerTypes: ['chat'],
+			},
+			{
+				headers: signedHeaders('secret', raw),
+				rawBody: Buffer.from(raw),
+				staticData: { signingSecret: 'secret' },
+			},
+		);
 
 		await trigger.webhook.call(context);
 		expect(json).toHaveBeenCalledWith({ message: '' });
@@ -868,10 +959,19 @@ describe('webhook() agent events', () => {
 
 	it('passes stream:false through to the item for the Respond to Agent node', async () => {
 		const body = { ...chatBody, stream: false };
-		const { context } = makeWebhookContext(body, {
-			event: 'agent_interaction',
-			triggerTypes: ['chat'],
-		});
+		const raw = JSON.stringify(body);
+		const { context } = makeWebhookContext(
+			body,
+			{
+				event: 'agent_interaction',
+				triggerTypes: ['chat'],
+			},
+			{
+				headers: signedHeaders('secret', raw),
+				rawBody: Buffer.from(raw),
+				staticData: { signingSecret: 'secret' },
+			},
+		);
 
 		const result = await trigger.webhook.call(context);
 		expect(result.workflowData![0][0].json).toMatchObject({ stream: false });
@@ -879,10 +979,19 @@ describe('webhook() agent events', () => {
 
 	it('routes to the correct output when only some types are selected', async () => {
 		const body = { ...chatBody, triggerType: 'assigned' };
-		const { context, send } = makeWebhookContext(body, {
-			event: 'agent_interaction',
-			triggerTypes: ['mention', 'assigned'],
-		});
+		const raw = JSON.stringify(body);
+		const { context, send } = makeWebhookContext(
+			body,
+			{
+				event: 'agent_interaction',
+				triggerTypes: ['mention', 'assigned'],
+			},
+			{
+				headers: signedHeaders('secret', raw),
+				rawBody: Buffer.from(raw),
+				staticData: { signingSecret: 'secret' },
+			},
+		);
 
 		const result = await trigger.webhook.call(context);
 		// Outputs: [mention, assigned] — assigned is index 1.

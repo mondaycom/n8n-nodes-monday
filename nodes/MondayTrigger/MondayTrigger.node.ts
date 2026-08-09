@@ -2,7 +2,6 @@ import type {
 	IDataObject,
 	IHookFunctions,
 	ILoadOptionsFunctions,
-	INodeListSearchResult,
 	INodeType,
 	INodeTypeDescription,
 	IWebhookFunctions,
@@ -10,12 +9,16 @@ import type {
 } from 'n8n-workflow';
 import { NodeOperationError } from 'n8n-workflow';
 
-import type { AgentTriggerType } from '../Monday/agentWebhook';
+import type { AgentIdentity, AgentTriggerType } from '../Monday/agentWebhook';
 import {
 	AGENT_SSE_HEADERS,
 	AGENT_TRIGGER_TYPES,
 	AGENT_TRIGGER_TYPE_LABELS,
 	buildAgentSseBody,
+	EXTERNAL_AGENT_DETACHED_USER_KIND,
+	EXTERNAL_AGENT_USER_KIND,
+	formatAgentIdentityLabel,
+	isExternalAgentTokenKind,
 	normalizeTriggerType,
 	resolveSelectedTriggerTypes,
 	verifyAgentSignature,
@@ -23,43 +26,145 @@ import {
 import { boardResourceLocator, searchBoards } from '../Monday/boardLocator';
 import { getBoardColumns } from '../Monday/columnOptions';
 import { MONDAY_AGENTS_API_VERSION } from '../Monday/constants';
-import { ensureNodeError } from '../Monday/errors';
 import { getBoardGroups } from '../Monday/groupLocator';
 import { MondayGraphQLClient } from '../Monday/MondayGraphQLClient';
 import { COLUMN_VALUES_CALCULATED_ARG, LINKED_VALUE_FRAGMENTS } from '../Monday/multiLevel';
 
 const AGENT_EVENT = 'agent_interaction';
 
+const AGENT_BY_USER_QUERY = `query ($agentUserIds: [ID!]) {
+	custom_agents(agent_user_ids: $agentUserIds, limit: 1) {
+		id
+		kind
+		state
+		agent_user_id
+		app_feature_id
+		goal
+		created_at
+		updated_at
+		profile { name }
+	}
+}`;
+
+type CustomAgentRow = {
+	id?: string | number;
+	kind?: string;
+	state?: string;
+	agent_user_id?: string | number | null;
+	app_feature_id?: string | number | null;
+	goal?: string | null;
+	created_at?: string | null;
+	updated_at?: string | null;
+	profile?: { name?: string } | null;
+};
+
 /**
- * listSearch method for the Agent picker. custom_agents has no server-side
- * search and accounts have few agents, so one page is fetched and the
- * typed filter is applied client-side. Requires the pre-release ("dev")
- * agents API version.
+ * Resolves the Custom Agent bound to the selected monday API credential.
+ * Relies on `me.kind === external_agent_member` (verified live). Agent tokens
+ * cannot query `custom_agents` (returns Internal server error), so identity
+ * comes from `me` — name, user id, and custom agent id parsed from
+ * `agent-{id}@agent.monday.com`.
  */
-export async function searchAgents(
-	this: ILoadOptionsFunctions,
-	filter?: string,
-): Promise<INodeListSearchResult> {
+export async function resolveConnectedAgentIdentity(
+	this: ILoadOptionsFunctions | IHookFunctions,
+): Promise<AgentIdentity> {
 	const client = new MondayGraphQLClient(this, 'mondayApi', MONDAY_AGENTS_API_VERSION);
-	const data = await client.execute(
-		'query { custom_agents(limit: 100) { id state profile { name } } }',
-		0,
-	);
-	const agents = (data.custom_agents ?? []) as Array<{
-		id: string | number;
-		state?: string;
-		profile?: { name?: string } | null;
-	}>;
+	const meData = await client.execute('query { me { id name kind email } }', 0);
+	const me = (meData.me ?? {}) as {
+		id?: string | number;
+		name?: string;
+		kind?: string;
+		email?: string | null;
+	};
+	const kind = me.kind ?? '';
+	if (!isExternalAgentTokenKind(kind)) {
+		throw new NodeOperationError(
+			this.getNode(),
+			'This credential is not a Custom Agent API token',
+			{
+				description:
+					`Agent Interaction requires the agent's own api_token (me.kind like "${EXTERNAL_AGENT_USER_KIND}" or "${EXTERNAL_AGENT_DETACHED_USER_KIND}"). ` +
+					`This credential resolved to kind "${kind || 'unknown'}". ` +
+					'Create a monday.com API credential with the api_token shown when the Custom Agent was created — owner/personal tokens will not work.',
+			},
+		);
+	}
+	const userId = String(me.id ?? '');
+	if (!userId) {
+		throw new NodeOperationError(this.getNode(), 'Could not resolve the agent user from this token');
+	}
 
-	const query = filter?.trim().toLowerCase();
-	const results = agents
-		.map((agent) => ({
-			name: agent.profile?.name ? `${agent.profile.name} (${agent.id})` : String(agent.id),
-			value: String(agent.id),
-		}))
-		.filter((option) => !query || option.name.toLowerCase().includes(query));
+	const email = me.email ?? null;
+	const emailMatch = email?.match(/^agent-(\d+)@agent\.monday\.com$/i);
+	const agentIdFromEmail = emailMatch?.[1];
 
-	return { results };
+	// Best-effort enrichment via custom_agents — agent tokens currently 500
+	// on this query (verified live), so failures are ignored and me/email used.
+	let agent: CustomAgentRow | null = null;
+	try {
+		const data = await client.execute(AGENT_BY_USER_QUERY, 0, { agentUserIds: [userId] });
+		const agents = (data.custom_agents ?? []) as CustomAgentRow[];
+		agent = agents[0] ?? null;
+	} catch {
+		agent = null;
+	}
+
+	const agentId = agent?.id != null ? String(agent.id) : agentIdFromEmail;
+	if (!agentId) {
+		throw new NodeOperationError(
+			this.getNode(),
+			'Could not resolve the Custom Agent ID for this token',
+			{
+				description:
+					'Expected me.email like agent-<id>@agent.monday.com for Custom Agent tokens. Re-create the agent credentials in monday.com and update this credential.',
+			},
+		);
+	}
+
+	return {
+		userId,
+		userName: me.name ?? '',
+		kind,
+		email,
+		agentId,
+		agentName: agent?.profile?.name ?? me.name ?? String(agentId),
+		agentKind: agent?.kind ?? 'EXTERNAL',
+		state: agent?.state ?? null,
+		agentUserId: agent?.agent_user_id != null ? String(agent.agent_user_id) : userId,
+		appFeatureId: agent?.app_feature_id != null ? String(agent.app_feature_id) : null,
+		goal: agent?.goal ?? null,
+		createdAt: agent?.created_at ?? null,
+		updatedAt: agent?.updated_at ?? null,
+	};
+}
+
+/**
+ * loadOptions for the Connected Agent field — surfaces name, ID, and
+ * metadata from the agent token so the user can confirm the credential
+ * before activating. Returns a single warning option when the token is wrong.
+ */
+export async function loadConnectedAgentOptions(
+	this: ILoadOptionsFunctions,
+): Promise<Array<{ name: string; value: string }>> {
+	try {
+		const identity = await resolveConnectedAgentIdentity.call(this);
+		const details = [
+			`user ${identity.userId}`,
+			identity.agentKind,
+			identity.email,
+		]
+			.filter(Boolean)
+			.join(' · ');
+		return [
+			{
+				name: `${formatAgentIdentityLabel(identity)}${details ? ` — ${details}` : ''}`,
+				value: identity.agentId,
+			},
+		];
+	} catch (error) {
+		const message = error instanceof Error ? error.message : 'Invalid agent credential';
+		return [{ name: `⚠️ ${message}`, value: '' }];
+	}
 }
 
 /**
@@ -67,9 +172,8 @@ export async function searchAgents(
  * levels (item event → its subitem-level WebhookEventType). monday has no
  * combined WebhookEventType, so "all" scope registers TWO webhooks (one
  * per level, both on the parent board) on the same URL and the node
- * routes each delivery to its own output. The `description.outputs`
- * expression inlines these keys via interpolation, so a pair added here
- * is picked up automatically.
+ * routes each delivery to its own output. When adding a pair here, also
+ * add its key to the inlined `description.outputs` expression below.
  */
 export const COMBINED_EVENTS: Record<string, string> = {
 	create_item: 'create_subitem',
@@ -255,27 +359,32 @@ function sendAgentReply(
 async function handleAgentWebhook(this: IWebhookFunctions): Promise<IWebhookResponseData> {
 	const response = this.getResponseObject();
 	const body = this.getBodyData();
+	const staticData = this.getWorkflowStaticData('node');
 
 	// Signature check first — before trusting anything in the body. The
-	// HMAC covers `${timestamp}.${rawBody}` with the agent's signing
-	// secret; raw request bytes, not re-serialized JSON.
-	const agentOptions = this.getNodeParameter('agentOptions', {}) as { signingSecret?: string };
-	const signingSecret = agentOptions.signingSecret ?? '';
-	if (signingSecret) {
-		const request = this.getRequestObject() as { rawBody?: Buffer } & ReturnType<
-			IWebhookFunctions['getRequestObject']
-		>;
-		const headers = this.getHeaderData();
-		const valid = verifyAgentSignature(
-			signingSecret,
-			request.rawBody ?? JSON.stringify(body ?? {}),
-			headers['x-monday-timestamp'] as string | undefined,
-			headers['x-monday-signature'] as string | undefined,
-		);
-		if (!valid) {
-			response.status(401).json({ error: 'Invalid signature' });
-			return { noWebhookResponse: true };
-		}
+	// HMAC covers `${timestamp}.${rawBody}` with the signing secret returned
+	// by update_custom_agent (persisted on activation). Raw request bytes,
+	// not re-serialized JSON.
+	const signingSecret = String(staticData.signingSecret ?? '');
+	if (!signingSecret) {
+		response.status(401).json({
+			error: 'Agent signing secret is missing — activate the workflow with a Custom Agent API token to register the callback URL',
+		});
+		return { noWebhookResponse: true };
+	}
+	const request = this.getRequestObject() as { rawBody?: Buffer } & ReturnType<
+		IWebhookFunctions['getRequestObject']
+	>;
+	const headers = this.getHeaderData();
+	const valid = verifyAgentSignature(
+		signingSecret,
+		request.rawBody ?? JSON.stringify(body ?? {}),
+		headers['x-monday-timestamp'] as string | undefined,
+		headers['x-monday-signature'] as string | undefined,
+	);
+	if (!valid) {
+		response.status(401).json({ error: 'Invalid signature' });
+		return { noWebhookResponse: true };
 	}
 
 	const triggerType = normalizeTriggerType(body.triggerType);
@@ -291,12 +400,16 @@ async function handleAgentWebhook(this: IWebhookFunctions): Promise<IWebhookResp
 	}
 
 	const payload = (body.payload ?? {}) as IDataObject;
+	const headerAgentId = this.getHeaderData()['x-monday-agent-id'] as string | undefined;
 	const item: IDataObject = {
 		triggerType,
 		text: payload.text ?? null,
 		payload,
 		timestamp: body.timestamp ?? null,
-		agentId: (this.getHeaderData()['x-monday-agent-id'] as string | undefined) ?? null,
+		agentId: headerAgentId ?? (staticData.agentId as string | undefined) ?? null,
+		agentName: (staticData.agentName as string | undefined) ?? null,
+		agentUserId: (staticData.agentUserId as string | undefined) ?? null,
+		agentKind: (staticData.agentKind as string | undefined) ?? null,
 		stream: wantsStream,
 	};
 
@@ -321,9 +434,8 @@ async function handleAgentWebhook(this: IWebhookFunctions): Promise<IWebhookResp
 	return { workflowData, noWebhookResponse: true };
 }
 
-// n8n's verification lint requires `usableAsTool` on every node class, and its
-// type only allows `true`. Harmless here: n8n skips AI-tool generation for
-// trigger nodes (group or name contains "trigger").
+// Webhook trigger nodes can't be AI tools (usableAsTool's type only allows `true`).
+// eslint-disable-next-line @n8n/community-nodes/node-usable-as-tool
 export class MondayTrigger implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'monday.com Trigger',
@@ -340,11 +452,10 @@ export class MondayTrigger implements INodeType {
 		// Board events: one main output. Agent Interaction: one output per
 		// selected trigger type. Combined events: Items + Subitems outputs
 		// (or one, per scope). Logic mirrored by buildOutputsFromParameters;
-		// the expression can't reference module constants at evaluation time,
-		// so the COMBINED_EVENTS keys are interpolated into the string here
-		// at module load — the two lists can never drift apart.
+		// the expression can't reference module constants, so the
+		// COMBINED_EVENTS keys are inlined here — keep both lists in sync.
 		outputs: `={{((event, types, scope) => {
-			if (${JSON.stringify(Object.keys(COMBINED_EVENTS))}.includes(event)) {
+			if (['create_item', 'change_column_value', 'change_name', 'item_archived', 'item_deleted', 'create_update'].includes(event)) {
 				if (scope === 'top') return [{ type: 'main', displayName: 'Items' }];
 				if (scope === 'subitems') return [{ type: 'main', displayName: 'Subitems' }];
 				return [{ type: 'main', displayName: 'Items' }, { type: 'main', displayName: 'Subitems' }];
@@ -443,50 +554,22 @@ export class MondayTrigger implements INodeType {
 			},
 			{
 				displayName:
-					'Create a Custom Agent once in monday.com (Agents → Manage agents → Bring your agent → Custom agent), then pick it below. On every activation this node points the agent\'s callback URL at this workflow. The agents API is pre-release ("dev") — behavior can change until monday ships it in a dated version.',
+					'Use a Custom Agent API token credential (the api_token shown when the agent was created in monday.com). Owner/personal tokens will not work — the node checks me.kind is an external agent kind (e.g. external_agent_member). On activation it registers this workflow\'s webhook as the agent callback URL and stores the signing secret automatically. The agents API is pre-release ("dev").',
 				name: 'setupNotice',
 				type: 'notice',
 				default: '',
 				displayOptions: { show: { event: [AGENT_EVENT] } },
 			},
 			{
-				displayName: 'Agent',
-				name: 'agentId',
-				type: 'resourceLocator',
-				default: { mode: 'list', value: '' },
+				displayName: 'Connected Agent Name or ID',
+				name: 'connectedAgent',
+				type: 'options',
+				typeOptions: {
+					loadOptionsMethod: 'loadConnectedAgentOptions',
+				},
+				default: '',
 				description:
-					'The monday.com Custom Agent to connect. The node automatically points the agent\'s callback URL at this workflow on every activation and test listen — no manual URL updates in monday needed. The executing credential must belong to the user who created the agent. Leave empty to manage the callback URL manually in monday.com.',
-				modes: [
-					// require-param-default misreads these mode descriptors as
-					// parameters — INodePropertyMode has no `default` field, so
-					// the fix it suggests would not compile.
-					// eslint-disable-next-line @n8n/community-nodes/require-param-default
-					{
-						displayName: 'From List',
-						name: 'list',
-						type: 'list',
-						typeOptions: {
-							searchListMethod: 'searchAgents',
-							searchable: true,
-						},
-					},
-					// eslint-disable-next-line @n8n/community-nodes/require-param-default
-					{
-						displayName: 'By ID',
-						name: 'id',
-						type: 'string',
-						placeholder: 'e.g. 177035',
-						validation: [
-							{
-								type: 'regex',
-								properties: {
-									regex: '[0-9]+',
-									errorMessage: 'The agent ID must be a number',
-								},
-							},
-						],
-					},
-				],
+					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 				displayOptions: { show: { event: [AGENT_EVENT] } },
 			},
 			{
@@ -512,25 +595,6 @@ export class MondayTrigger implements INodeType {
 			},
 			{
 				displayName: 'Options',
-				name: 'agentOptions',
-				type: 'collection',
-				placeholder: 'Add option',
-				default: {},
-				displayOptions: { show: { event: [AGENT_EVENT] } },
-				options: [
-					{
-						displayName: 'Signing Secret',
-						name: 'signingSecret',
-						type: 'string',
-						typeOptions: { password: true },
-						default: '',
-						description:
-							'The signing secret shown once when the agent is created. When set, every delivery\'s HMAC signature is verified and forgeries are rejected. Strongly recommended.',
-					},
-				],
-			},
-			{
-				displayName: 'Options',
 				name: 'options',
 				type: 'collection',
 				placeholder: 'Add option',
@@ -548,12 +612,11 @@ export class MondayTrigger implements INodeType {
 				],
 			},
 		],
-		usableAsTool: true,
 	};
 
 	methods = {
-		listSearch: { searchBoards, searchAgents },
-		loadOptions: { getBoardColumns, getBoardGroups },
+		listSearch: { searchBoards },
+		loadOptions: { getBoardColumns, getBoardGroups, loadConnectedAgentOptions },
 	};
 
 	webhookMethods = {
@@ -561,19 +624,21 @@ export class MondayTrigger implements INodeType {
 			/**
 			 * Board events: true only if the webhook this node registered
 			 * earlier still exists on the board (users can delete webhooks in
-			 * monday). Agent event: the agent's current callback URL cannot be
-			 * read back from the API (CustomAgent exposes no callback_url
-			 * field), so whenever an Agent ID is set this returns false and
-			 * create() repoints the URL — one cheap idempotent mutation that
-			 * self-heals manual edits.
+			 * monday). Agent event: true only when the stored callback URL still
+			 * matches this workflow's webhook URL and a signing secret was
+			 * persisted — otherwise create() re-registers (which rotates the
+			 * secret whenever the callback URL is set/updated).
 			 */
 			async checkExists(this: IHookFunctions): Promise<boolean> {
 				const event = this.getNodeParameter('event') as string;
 				if (event === AGENT_EVENT) {
-					const agentId = String(
-						this.getNodeParameter('agentId', '', { extractValue: true }) ?? '',
-					).trim();
-					return agentId === '';
+					const staticData = this.getWorkflowStaticData('node');
+					const webhookUrl = this.getNodeWebhookUrl('default') as string;
+					return (
+						typeof staticData.signingSecret === 'string' &&
+						staticData.signingSecret !== '' &&
+						staticData.callbackUrl === webhookUrl
+					);
 				}
 
 				const staticData = this.getWorkflowStaticData('node');
@@ -622,48 +687,60 @@ export class MondayTrigger implements INodeType {
 			 * Board events: create_webhook — monday immediately POSTs a JSON
 			 * challenge to the URL and only registers the webhook if it's
 			 * echoed back (handled in webhook() below). Agent event: points
-			 * the agent's callback URL at this workflow's webhook URL
-			 * (production URL on activation, test URL during "Listen for test
-			 * event") via update_custom_agent — requires the OWNER token.
+			 * the agent's callback URL at this workflow's webhook URL via
+			 * update_custom_agent using the AGENT token (omit agent_id — monday
+			 * resolves the agent from the token) and persists the rotated
+			 * signing_secret.
 			 */
 			async create(this: IHookFunctions): Promise<boolean> {
 				const webhookUrl = this.getNodeWebhookUrl('default') as string;
 
 				if ((this.getNodeParameter('event') as string) === AGENT_EVENT) {
-					const agentId = String(
-						this.getNodeParameter('agentId', '', { extractValue: true }) ?? '',
-					).trim();
-					if (agentId === '') return true;
-					if (!/^\d+$/.test(agentId)) {
-						throw new NodeOperationError(
-							this.getNode(),
-							`Agent ID must be numeric, got "${agentId}"`,
-							{
-								description:
-									'Pick the agent from the list, or use the numeric agent ID shown when the Custom Agent was created in monday.com.',
-							},
-						);
-					}
-
+					const identity = await resolveConnectedAgentIdentity.call(this);
 					const client = new MondayGraphQLClient(this, 'mondayApi', MONDAY_AGENTS_API_VERSION);
+					let signingSecret: string | undefined;
 					try {
-						await client.execute(
+						const data = await client.execute(
 							`mutation ($input: UpdateCustomAgentInput!) {
-								update_custom_agent(input: $input) { success }
+								update_custom_agent(input: $input) { success signing_secret }
 							}`,
 							0,
-							{ input: { agent_id: Number(agentId), callback_url: webhookUrl } },
+							// Omit agent_id — inferred from the agent token identity.
+							{ input: { callback_url: webhookUrl } },
 						);
+						const payload = data.update_custom_agent as
+							| { success?: boolean; signing_secret?: string | null }
+							| undefined;
+						signingSecret = payload?.signing_secret ?? undefined;
+						if (!signingSecret) {
+							throw new NodeOperationError(
+								this.getNode(),
+								'update_custom_agent did not return a signing_secret',
+								{
+									description:
+										'The callback URL may not have changed, or the API response was incomplete. Deactivate and reactivate the workflow, or set a new public WEBHOOK_URL and try again.',
+								},
+							);
+						}
 					} catch (error) {
+						if (error instanceof NodeOperationError) {
+							// Already mapped — rethrow as-is (signing_secret missing, etc.).
+							// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
+							throw error;
+						}
 						if (
 							error instanceof Error &&
-							/not authorized to update this agent/i.test(error.message)
+							/not authorized to update this agent|not an? agent|forbidden/i.test(error.message)
 						) {
-							throw new NodeOperationError(this.getNode(), 'Not authorized to update this agent', {
-								description:
-									`monday.com refused to update agent ${agentId}. The API token must belong to the user who created the agent (the owner), and the agent ID must be correct. ` +
-									'Alternatively, clear the Agent field and set the callback URL manually in monday.com.',
-							});
+							throw new NodeOperationError(
+								this.getNode(),
+								'Not authorized to update this agent',
+								{
+									description:
+										`monday.com refused to update the agent callback URL. Use the Custom Agent's api_token (me.kind "${EXTERNAL_AGENT_USER_KIND}"), not an owner/personal token. ` +
+										`Resolved agent: ${formatAgentIdentityLabel(identity)}.`,
+								},
+							);
 						}
 						// Live error text: "callback_url must use HTTPS" (localhost or
 						// http URLs are rejected at registration).
@@ -671,17 +748,24 @@ export class MondayTrigger implements INodeType {
 							throw new NodeOperationError(this.getNode(), 'monday.com rejected the webhook URL', {
 								description:
 									`monday.com only accepts public HTTPS callback URLs, but this n8n instance's webhook URL is ${webhookUrl}. ` +
-									'If self-hosting, set the WEBHOOK_URL environment variable to your public HTTPS address (or use a tunnel for local testing). ' +
-									'Alternatively, clear the Agent field to manage the callback URL manually.',
+									'If self-hosting, set the WEBHOOK_URL environment variable to your public HTTPS address (or use a tunnel for local testing).',
 							});
 						}
 						// Errors from MondayGraphQLClient are already mapped NodeApiErrors.
-						throw ensureNodeError(this.getNode(), error);
+						// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
+						throw error;
 					}
 
 					const staticData = this.getWorkflowStaticData('node');
-					staticData.agentId = agentId;
+					staticData.agentId = identity.agentId;
+					staticData.agentName = identity.agentName;
+					staticData.agentUserId = identity.agentUserId;
+					staticData.agentKind = identity.agentKind;
+					staticData.agentState = identity.state;
+					staticData.agentEmail = identity.email;
+					staticData.appFeatureId = identity.appFeatureId;
 					staticData.callbackUrl = webhookUrl;
+					staticData.signingSecret = signingSecret;
 					return true;
 				}
 
@@ -731,7 +815,8 @@ export class MondayTrigger implements INodeType {
 							);
 						}
 						// Errors from MondayGraphQLClient are already mapped NodeApiErrors.
-						throw ensureNodeError(this.getNode(), error);
+						// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
+						throw error;
 					}
 					const id = (data.create_webhook as IDataObject | undefined)?.id;
 					return id === undefined ? undefined : String(id);
@@ -760,7 +845,8 @@ export class MondayTrigger implements INodeType {
 								// Best effort — the original error matters more.
 							}
 						}
-						throw ensureNodeError(this.getNode(), error);
+						// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
+						throw error;
 					}
 					if (webhookIds.length === 0) return false;
 					this.getWorkflowStaticData('node').webhookIds = webhookIds;
@@ -790,7 +876,14 @@ export class MondayTrigger implements INodeType {
 
 				if ((this.getNodeParameter('event') as string) === AGENT_EVENT) {
 					delete staticData.agentId;
+					delete staticData.agentName;
+					delete staticData.agentUserId;
+					delete staticData.agentKind;
+					delete staticData.agentState;
+					delete staticData.agentEmail;
+					delete staticData.appFeatureId;
 					delete staticData.callbackUrl;
+					delete staticData.signingSecret;
 					return true;
 				}
 

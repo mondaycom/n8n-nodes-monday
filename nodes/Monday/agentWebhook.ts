@@ -150,3 +150,44 @@ export function resolveSelectedTriggerTypes(param: unknown): AgentTriggerType[] 
 	const active = AGENT_TRIGGER_TYPES.filter((type) => selected.includes(type));
 	return active.length > 0 ? active : [...AGENT_TRIGGER_TYPES];
 }
+
+/**
+ * `me.kind` values for Custom Agent (EXTERNAL) API tokens. Verified live:
+ * - `external_agent_member` — connected custom agent
+ * - `external_agent_detached_member` — custom agent token (seen on newly
+ *   created agents, 2026-08-09)
+ * Regular user tokens return `admin` / `member`; personal agents return
+ * `personal_agent_member` (no callback URL).
+ */
+export const EXTERNAL_AGENT_USER_KIND = 'external_agent_member';
+export const EXTERNAL_AGENT_DETACHED_USER_KIND = 'external_agent_detached_member';
+
+const EXTERNAL_AGENT_USER_KIND_RE = /^external_agent(?:_detached)?_member$/;
+
+/** True when the credential is a Custom Agent (EXTERNAL) API token. */
+export function isExternalAgentTokenKind(kind: unknown): boolean {
+	return typeof kind === 'string' && EXTERNAL_AGENT_USER_KIND_RE.test(kind);
+}
+
+/** Identity resolved from an agent API token via `me` + `custom_agents`. */
+export interface AgentIdentity {
+	userId: string;
+	userName: string;
+	kind: string;
+	email: string | null;
+	agentId: string;
+	agentName: string;
+	agentKind: string | null;
+	state: string | null;
+	agentUserId: string | null;
+	appFeatureId: string | null;
+	goal: string | null;
+	createdAt: string | null;
+	updatedAt: string | null;
+}
+
+/** One-line label for the Connected Agent picker / notices. */
+export function formatAgentIdentityLabel(identity: AgentIdentity): string {
+	const state = identity.state ? ` · ${identity.state}` : '';
+	return `${identity.agentName} (${identity.agentId})${state}`;
+}

@@ -29,7 +29,7 @@ export class MondayApi implements ICredentialType {
 			default: '',
 			required: true,
 			description:
-				'Personal API token from monday.com (Profile → Developers → My Access Tokens).',
+				'Personal API token (Profile → Developers → My Access Tokens), or a Custom Agent api_token for Agent Interaction triggers and acting as the agent.',
 		},
 	];
 

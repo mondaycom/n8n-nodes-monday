@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-08-09
+
+### Changed
+
+- **Agent Interaction** trigger now requires a Custom Agent API token
+  (`me.kind` like `external_agent_member` / `external_agent_detached_member`),
+  not an owner/personal token.
+- On activation the trigger registers the callback URL via
+  `update_custom_agent` without `agent_id` (resolved from the agent token) and
+  persists the returned `signing_secret` automatically.
+- Removed the Agent picker and Signing Secret option; added a Connected Agent
+  field that shows the agent name, ID, and metadata from the credential.
+
 ## [0.2.0] - 2026-07-27
 
 ### Changed

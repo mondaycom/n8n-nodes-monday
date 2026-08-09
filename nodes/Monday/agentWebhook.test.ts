@@ -8,7 +8,10 @@ import {
 	AGENT_TRIGGER_TYPES,
 	buildAgentResponse,
 	buildAgentSseBody,
+	EXTERNAL_AGENT_USER_KIND,
 	extractAgentMentionContext,
+	formatAgentIdentityLabel,
+	isExternalAgentTokenKind,
 	normalizeTriggerType,
 	resolveSelectedTriggerTypes,
 	verifyAgentSignature,
@@ -151,5 +154,37 @@ describe('resolveSelectedTriggerTypes', () => {
 		expect(resolveSelectedTriggerTypes([])).toEqual([...AGENT_TRIGGER_TYPES]);
 		expect(resolveSelectedTriggerTypes(undefined)).toEqual([...AGENT_TRIGGER_TYPES]);
 		expect(resolveSelectedTriggerTypes(['bogus'])).toEqual([...AGENT_TRIGGER_TYPES]);
+	});
+});
+
+describe('agent token kind helpers', () => {
+	it('recognizes external agent member kinds as Custom Agent tokens', () => {
+		expect(EXTERNAL_AGENT_USER_KIND).toBe('external_agent_member');
+		expect(isExternalAgentTokenKind('external_agent_member')).toBe(true);
+		expect(isExternalAgentTokenKind('external_agent_detached_member')).toBe(true);
+		expect(isExternalAgentTokenKind('personal_agent_member')).toBe(false);
+		expect(isExternalAgentTokenKind('admin')).toBe(false);
+		expect(isExternalAgentTokenKind('member')).toBe(false);
+		expect(isExternalAgentTokenKind(undefined)).toBe(false);
+	});
+
+	it('formats a readable Connected Agent label', () => {
+		expect(
+			formatAgentIdentityLabel({
+				userId: '1',
+				userName: 'Bot',
+				kind: EXTERNAL_AGENT_USER_KIND,
+				email: null,
+				agentId: '187604',
+				agentName: 'n8n test k',
+				agentKind: 'EXTERNAL',
+				state: 'ACTIVE',
+				agentUserId: '1',
+				appFeatureId: null,
+				goal: null,
+				createdAt: null,
+				updatedAt: null,
+			}),
+		).toBe('n8n test k (187604) · ACTIVE');
 	});
 });
